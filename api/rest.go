@@ -2,11 +2,22 @@ package api
 
 import (
 	"chat-system/core"
+	"chat-system/repo"
+	"context"
 	"fmt"
+	"strconv"
+
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
 	"github.com/gofiber/fiber/v2"
-	"strconv"
+	"github.com/gofiber/fiber/v2/middleware/healthcheck"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/monitor"
+	fiberRecover "github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 )
 
 var Client huma.CLI
@@ -35,16 +46,38 @@ type getMessagesInput struct {
 type getMessagesOutput struct {
 	Body struct {
 		Messages []core.Message `json:"messages"`
-		Next     string    `json:"next"`
-		Prev     string    `json:"prev"`
+		Next     string         `json:"next"`
+		Prev     string         `json:"prev"`
 	}
+}
+
+type ResBody[T any] struct {
+	Body T
 }
 
 func init() {
 	app := fiber.New()
+	// Initialize default config
+	// Initialize default config
+	app.Use(requestid.New())
+
+	app.Use(logger.New())
+	app.Use(fiberRecover.New())
+
 	api := humafiber.New(app, huma.DefaultConfig("Chat API", "0.0.0-pre"))
-	service := core.NewService(nil)
-	handler := Handler{service}
+
+	mongoOptions := &options.ClientOptions{}
+	mongoOptions.ApplyURI("mongodb://localhost:27017")
+	mongoCli, err := mongo.Connect(context.TODO(), mongoOptions)
+	if err != nil {
+		panic(err)
+	}
+	mongoRepo, _ := repo.NewMongoRepo(mongoCli)
+	service := core.NewService(mongoRepo)
+	handler := Handler{
+		service,
+		"http://127.0.01:8888",
+	}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "list-messages",
@@ -59,6 +92,16 @@ func init() {
 		Path:          "/topics/{TopicID}/messages",
 		DefaultStatus: 201,
 	}, handler.sendMessage)
+
+	app.Use(healthcheck.New(healthcheck.Config{
+		ReadinessProbe: func(c *fiber.Ctx) bool {
+			err := mongoCli.Ping(context.Background(), nil)
+			return err == nil
+		},
+	}))
+
+	// Initialize default config (Assign the middleware to /metrics)
+	app.Get("/metrics", monitor.New())
 
 	Client = huma.NewCLI(func(hooks huma.Hooks, options *Options) {
 		hooks.OnStart(func() {
