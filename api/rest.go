@@ -1,11 +1,13 @@
 package api
 
 import (
+	"chat-system/config"
 	"chat-system/core"
 	"chat-system/repo"
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
@@ -19,8 +21,6 @@ import (
 	fiberRecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 )
-
-var Client huma.CLI
 
 // Options for the CLI.
 type Options struct {
@@ -55,23 +55,19 @@ type ResBody[T any] struct {
 	Body T
 }
 
-func init() {
+func Initialize(conf *config.Confing) huma.CLI {
 	app := fiber.New()
-	// Initialize default config
-	// Initialize default config
-	app.Use(requestid.New())
+	setFiberMiddleWares(app)
 
-	app.Use(logger.New())
-	app.Use(fiberRecover.New())
-
-	api := humafiber.New(app, huma.DefaultConfig("Chat API", "0.0.0-pre"))
+	api := humafiber.New(app, huma.DefaultConfig("Chat API", "0.0.0-alpha-1"))
 
 	mongoOptions := &options.ClientOptions{}
-	mongoOptions.ApplyURI("mongodb://localhost:27017")
+	mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
 	mongoCli, err := mongo.Connect(context.TODO(), mongoOptions)
 	if err != nil {
 		panic(err)
 	}
+
 	mongoRepo, _ := repo.NewMongoRepo(mongoCli)
 	service := core.NewService(mongoRepo)
 	handler := Handler{
@@ -79,6 +75,37 @@ func init() {
 		"http://127.0.01:8888",
 	}
 
+	registerEndpoints(api, handler)
+
+	app.Use(healthcheck.New(healthcheck.Config{
+		ReadinessProbe: func(c *fiber.Ctx) bool {
+			ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+			defer cancel()
+			err := mongoCli.Ping(ctx, nil)
+			return err == nil
+		},
+	}))
+
+	client := huma.NewCLI(func(hooks huma.Hooks, options *Options) {
+		hooks.OnStart(func() {
+			fmt.Printf("Starting server on port %d...\n", options.Port)
+			app.Listen(":" + strconv.Itoa(options.Port))
+		})
+	})
+
+	return client
+}
+
+func setFiberMiddleWares(app *fiber.App) {
+
+	app.Use(requestid.New())
+	app.Use(logger.New())
+	app.Use(fiberRecover.New())
+	app.Get("/metrics", monitor.New())
+
+}
+
+func registerEndpoints(api huma.API, handler Handler) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-messages",
 		Method:      "GET",
@@ -92,22 +119,4 @@ func init() {
 		Path:          "/topics/{TopicID}/messages",
 		DefaultStatus: 201,
 	}, handler.sendMessage)
-
-	app.Use(healthcheck.New(healthcheck.Config{
-		ReadinessProbe: func(c *fiber.Ctx) bool {
-			err := mongoCli.Ping(context.Background(), nil)
-			return err == nil
-		},
-	}))
-
-	// Initialize default config (Assign the middleware to /metrics)
-	app.Get("/metrics", monitor.New())
-
-	Client = huma.NewCLI(func(hooks huma.Hooks, options *Options) {
-		hooks.OnStart(func() {
-			fmt.Printf("Starting server on port %d...\n", options.Port)
-			app.Listen(":" + strconv.Itoa(options.Port))
-		})
-	})
-
 }
