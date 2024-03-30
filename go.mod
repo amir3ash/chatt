@@ -10,10 +10,17 @@ require (
 )
 
 require (
+	github.com/fasthttp/websocket v1.5.7 // indirect
+	github.com/savsgio/gotils v0.0.0-20230208104028-c358bd845dee // indirect
+	golang.org/x/net v0.21.0 // indirect
+)
+
+require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/danielgtaylor/casing v1.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.5.0 // indirect
+	github.com/gofiber/contrib/websocket v1.3.0
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
