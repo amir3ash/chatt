@@ -10,8 +10,8 @@ import (
 )
 
 type whoCanReadTopic interface {
-	WhoCanReadTopic(topicId string) ([]string, error)
-	TopicsWhichUserCanRead(userId string, topics []string) (topicIds []string, err error)
+	WhoCanWatchTopic(topicId string) ([]string, error)
+	TopicsWhichUserCanWatch(userId string, topics []string) (topicIds []string, err error)
 }
 
 type roomServer struct {
@@ -29,7 +29,7 @@ func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
 			serverTopics = append(serverTopics, roomId)
 		}
 
-		topics, err := authz.TopicsWhichUserCanRead(c.getUserId(), serverTopics)
+		topics, err := authz.TopicsWhichUserCanWatch(c.getUserId(), serverTopics)
 		if err != nil {
 			slog.Error("can't get topics which the user can read", "err", err)
 			return
@@ -52,7 +52,7 @@ func (r *roomServer) SendMessageTo(topicId string, msg *core.Message) {
 }
 
 func (r *roomServer) createRoom(topicId string) *room {
-	userIds, _ := r.authz.WhoCanReadTopic(topicId)
+	userIds, _ := r.authz.WhoCanWatchTopic(topicId)
 	userConnections := r.broker.findConnectionsForUsers(userIds)
 
 	room := newRoom(topicId, userConnections)
