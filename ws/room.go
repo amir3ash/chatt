@@ -3,8 +3,8 @@ package ws
 import (
 	"chat-system/core"
 	"encoding/json"
-	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/gofiber/contrib/websocket"
 )
@@ -28,6 +28,7 @@ func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
 		for roomId := range server.rooms {
 			serverTopics = append(serverTopics, roomId)
 		}
+		slog.Debug("OnConnect in roomserver", "rooms", server.rooms)
 
 		topics, err := authz.TopicsWhichUserCanWatch(c.getUserId(), serverTopics)
 		if err != nil {
@@ -52,9 +53,13 @@ func (r *roomServer) SendMessageTo(topicId string, msg *core.Message) {
 }
 
 func (r *roomServer) createRoom(topicId string) *room {
-	userIds, _ := r.authz.WhoCanWatchTopic(topicId)
-	userConnections := r.broker.findConnectionsForUsers(userIds)
+	userIds, err := r.authz.WhoCanWatchTopic(topicId)
+	if err != nil {
+		slog.Error("error in calling WhoCanWatchTopic", slog.String("topicId", topicId), "err", err)
+	}
 
+	userConnections := r.broker.findConnectionsForUsers(userIds)
+	slog.Debug("roomServer.createRoom", "topicId", topicId, "userConns", userConnections)
 	room := newRoom(topicId, userConnections)
 	r.rooms[topicId] = room
 	r.broker.registerOnDisconnect(room)
@@ -72,34 +77,38 @@ type room struct {
 	ID               string
 	onlinePersons    map[string][]conn
 	destroyObservers []func(roomId string)
+	mu               sync.Mutex
 }
 
 func newRoom(id string, users []userWithConns) *room {
-	fmt.Printf("creating new room id=%s, users: %v,\n", id, users)
+	slog.Debug("creating new room", slog.String("id", id), "users", users)
 	persons := make(map[string][]conn, len(users))
 	for _, u := range users {
 		persons[u.userId] = u.connections
 	}
-	return &room{id, persons, make([]func(string), 0)}
+	return &room{id, persons, make([]func(string), 0), sync.Mutex{}}
 }
 
 func (r *room) subscribeOnDestruct(f func(roomeId string)) {
-	slog.Info("room.onDestruct called", slog.String("roomId", r.ID))
+	slog.Debug("room.onDestruct called", slog.String("roomId", r.ID))
 	r.destroyObservers = append(r.destroyObservers, f)
 }
 
 func (r *room) addConn(c conn) {
-	slog.Info("room.addConn called.", slog.String("userId", c.getUserId()))
+	slog.Debug("room.addConn called.", slog.String("userId", c.getUserId()))
+	r.mu.Lock()
 
 	userId := c.getUserId()
 	connections := r.onlinePersons[userId]
 	connections = append(connections, c)
 	r.onlinePersons[userId] = connections
+	r.mu.Unlock()
 }
 
 func (r *room) onDisconnect(c conn) { // called when client disconnected
-	slog.Info("room.onDisconnect called.", slog.String("userId", c.getUserId()))
+	slog.Debug("room.onDisconnect called.", slog.String("userId", c.getUserId()))
 	userId := c.getUserId()
+	r.mu.Lock()
 	connections := r.onlinePersons[userId]
 
 	connections = findAndDelete(connections, c)
@@ -109,14 +118,14 @@ func (r *room) onDisconnect(c conn) { // called when client disconnected
 	} else {
 		r.onlinePersons[userId] = connections
 	}
+	r.mu.Unlock()
 }
 func (r *room) SendMessage(m *core.Message) { // maybe message will be inconsistence with DB
-	fmt.Printf("room.SendMessage called with messge %v, onlinepersions: %v \n", m, r.onlinePersons)
+	slog.Debug("room.SendMessage called", slog.String("topicId", m.TopicID), "onlinepersions", r.onlinePersons)
 	bytes, _ := json.Marshal(m)
 
 	for _, connections := range r.onlinePersons {
 		for _, v := range connections {
-			fmt.Println("calling conn.sendbyte in room.SendMessage")
 			v.sendBytes(bytes)
 		}
 	}
@@ -152,10 +161,11 @@ type wsServer struct {
 	onlineClients  map[string][]conn // connections for a userId
 	connectSubs    []func(conn)
 	disconnectSubs []disconnectSubscriber
+	mu             sync.Mutex
 }
 
 func NewWSServer() *wsServer {
-	return &wsServer{make(map[string][]conn), []func(conn){}, []disconnectSubscriber{}}
+	return &wsServer{make(map[string][]conn), []func(conn){}, []disconnectSubscriber{}, sync.Mutex{}}
 }
 
 func (b *wsServer) OnConnect(f func(conn)) {
@@ -168,6 +178,9 @@ func (b *wsServer) unRegisterOnDisconnect(o disconnectSubscriber) {
 	b.disconnectSubs = findAndDelete(b.disconnectSubs, o)
 }
 func (b *wsServer) AddConnByPersonID(c conn, id string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	conns := b.onlineClients[id]
 
 	conns = append(conns, c)
@@ -178,16 +191,21 @@ func (b *wsServer) AddConnByPersonID(c conn, id string) {
 	}
 }
 func (b *wsServer) RemoveConn(c conn) {
-	userId := c.getUserId()
-	conns4person := b.onlineClients[userId]
+	func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
 
-	conns4person = findAndDelete(conns4person, c)
+		userId := c.getUserId()
+		conns4person := b.onlineClients[userId]
 
-	if len(conns4person) == 0 {
-		delete(b.onlineClients, userId)
-	} else {
-		b.onlineClients[userId] = conns4person
-	}
+		conns4person = findAndDelete(conns4person, c)
+
+		if len(conns4person) == 0 {
+			delete(b.onlineClients, userId)
+		} else {
+			b.onlineClients[userId] = conns4person
+		}
+	}()
 
 	for _, s := range b.disconnectSubs {
 		s.onDisconnect(c)
@@ -200,7 +218,7 @@ type userWithConns struct {
 }
 
 func (b *wsServer) findConnectionsForUsers(userIds []string) (res []userWithConns) {
-	fmt.Printf("broker.findConns connections: %v, userIds: %v\n", b.onlineClients, userIds)
+	slog.Debug("findConnectionsForUsers", "connections", b.onlineClients, "userIds", userIds)
 	for _, u := range userIds {
 		if conns := b.onlineClients[u]; conns != nil {
 			newConns := make([]conn, len(conns))
@@ -211,12 +229,18 @@ func (b *wsServer) findConnectionsForUsers(userIds []string) (res []userWithConn
 	return
 }
 
+// Deletes item from slice then insert zero value at end (for GC).
+// Be careful, it reorders the slice
 func findAndDelete[T comparable](list []T, elem T) []T {
+	var zero T
+	lastIdx := len(list) - 1
 	for i := range list {
 		if list[i] == elem {
-			return append(list[i:], list[i+1:]...)
+			list[i] = list[lastIdx]
+			list[lastIdx] = zero
+			list = list[:lastIdx]
+			return list
 		}
 	}
-
 	return list
 }
