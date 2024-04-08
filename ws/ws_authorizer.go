@@ -37,7 +37,7 @@ func (w wsAuthorizer) TopicsWhichUserCanWatch(userId string, topicsToFilter []st
 	slices.Sort(authorizedTopics)
 	slices.Sort(topicsToFilter)
 
-	for i, j := 0, 0; i < len(authorizedTopics) && j < len(topicIds); {
+	for i, j := 0, 0; i < len(authorizedTopics) && j < len(topicsToFilter); {
 		a := authorizedTopics[i]
 		b := topicsToFilter[j]
 

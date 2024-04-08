@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"chat-system/authz"
 	"fmt"
 	"log/slog"
 	"time"
@@ -23,12 +24,12 @@ func RunServer(app *fiber.App, broker *wsServer) {
 	})
 
 	app.Get("/ws", websocket.New(func(c *websocket.Conn) {
-		// When the function returns, unregister the client and close the connection
-		defer func() {
-			c.Close()
-		}()
+		defer c.Close()
 
-		userId := c.Locals("userId").(string)
+		userId, ok := c.Locals(authz.UserIdCtxKey).(string)
+		if !ok {
+			return
+		}
 
 		conn := &connection{*c, userId}
 		broker.AddConnByPersonID(conn, conn.getUserId())
@@ -41,7 +42,7 @@ func RunServer(app *fiber.App, broker *wsServer) {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					slog.Warn("websocket read error:", err)
 				}
-				return // Calls the deferred function, i.e. closes the connection on error
+				return
 			}
 
 			if messageType == websocket.TextMessage {

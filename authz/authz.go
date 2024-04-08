@@ -56,6 +56,7 @@ func (a Authoriz) WhoHasRel(relation, objType, objId string) ([]string, error) {
 	stream, err := a.cli.LookupSubjects(context.Background(), &v1.LookupSubjectsRequest{
 		Resource:   &v1.ObjectReference{ObjectType: objType, ObjectId: objId},
 		Permission: relation,
+		SubjectObjectType: "user",
 	})
 
 	if err != nil {
