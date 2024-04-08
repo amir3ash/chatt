@@ -8,7 +8,7 @@ import (
 
 type Repository interface {
 	ListMessages(ctx context.Context, topicID string, p Pagination) ([]Message, error)
-	SendMsgToTopic(ctx context.Context,sender Sender, topicID string, message string) (Message, error)
+	SendMsgToTopic(ctx context.Context, sender Sender, topicID string, message string) (Message, error)
 }
 
 type Service interface {
@@ -19,10 +19,11 @@ type Service interface {
 type AuthZ interface {
 }
 
-type Sender struct {ID string}
+type Sender struct{ ID string }
 type Message struct {
 	SenderId string    `json:"senderId"`
 	ID       string    `json:"id"`
+	TopicID  string    `josn:"topicId"`
 	SentAt   time.Time `json:"sentAt"`
 	Text     string    `json:"text"`
 }

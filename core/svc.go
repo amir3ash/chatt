@@ -1,30 +1,35 @@
 package core
 
 import (
+	"chat-system/authz"
 	"context"
 	"errors"
 )
 
-func NewService(repo Repository) *svc {
-	return &svc{repo: repo}
+var ErrNotAuthorized = errors.New("not authorized")
+
+type broker interface {
+	SendMessageTo(topicId string, msg *Message)
+}
+
+func NewService(repo Repository, broker broker, auth authz.Authoriz) *svc {
+	return &svc{repo: repo, broker: broker, authz: auth}
 }
 
 type svc struct {
-	repo  Repository
-	authz SimpleAuthz
-}
-
-type SimpleAuthz struct {
-}
-
-func (s SimpleAuthz) CanUserDo(userId string, verb string, subjectId string) bool {
-	return true
+	repo   Repository
+	authz  authz.Authoriz
+	broker broker
 }
 
 func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]Message, error) {
-	can := s.authz.CanUserDo("123", "list_messages", topicID)
+	can, err := s.authz.Check(authz.UserIdFromCtx(ctx), "read", "topic", topicID)
+	if err != nil {
+		return nil, err
+	}
+
 	if !can {
-		return nil, errors.New("not Authorized")
+		return nil, ErrNotAuthorized
 	}
 
 	res, err := s.repo.ListMessages(ctx, topicID, p)
@@ -32,9 +37,19 @@ func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]
 }
 
 func (s svc) SendMessage(ctx context.Context, topicID string, message string) (Message, error) {
-	//TODO implement me
-	// panic("implement me")
+	userId := authz.UserIdFromCtx(ctx)
+	can, err := s.authz.Check(userId, "write", "topic", topicID)
+	if err != nil {
+		return Message{}, err
+	}
 
-	res, err := s.repo.SendMsgToTopic(ctx, Sender{ID: "123"}, topicID, message)
-	return res, err
+	if !can {
+		return Message{}, ErrNotAuthorized
+	}
+
+	msg, err := s.repo.SendMsgToTopic(ctx, Sender{ID: userId}, topicID, message)
+	if err == nil {
+		s.broker.SendMessageTo(topicID, &msg)
+	}
+	return msg, err
 }

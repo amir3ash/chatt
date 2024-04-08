@@ -18,8 +18,10 @@ type Conf struct {
 type Authoriz struct {
 	cli *authzed.Client
 }
-
-func NewAuthoriz(conf Conf) (*Authoriz, error) {
+func NewAuthoriz(cli *authzed.Client)(*Authoriz){
+	return &Authoriz{cli}
+}
+func NewInsecureAuthZedCli(conf Conf) (*authzed.Client, error) {
 	systemCerts := grpcutil.WithInsecureBearerToken(conf.BearerToken)
 
 	client, err := authzed.NewClient(
@@ -32,7 +34,7 @@ func NewAuthoriz(conf Conf) (*Authoriz, error) {
 		return nil, err
 	}
 
-	return &Authoriz{client}, nil
+	return client, nil
 }
 
 // check a user that has relation to object
