@@ -12,13 +12,16 @@ type broker interface {
 	SendMessageTo(topicId string, msg *Message)
 }
 
-func NewService(repo Repository, broker broker, auth authz.Authoriz) *svc {
+func NewService(repo Repository, broker broker, auth permissionChecker) *svc {
 	return &svc{repo: repo, broker: broker, authz: auth}
 }
 
+type permissionChecker interface {
+	Check(userId, perm, objType, objId string) (bool, error)
+}
 type svc struct {
 	repo   Repository
-	authz  authz.Authoriz
+	authz  permissionChecker
 	broker broker
 }
 

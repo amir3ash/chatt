@@ -10,15 +10,12 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/pprof"
 	fiberRecover "github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
+	"github.com/felixge/fgprof"
+	"github.com/maruel/panicparse/v2/stack/webstack"
+
 )
 
-// Options for the CLI.
-type Options struct {
-	Port int `help:"Port to listen on" short:"p" default:"8888"`
-}
-
-// -----
 
 type sendMessageInput struct {
 	TopicID string `path:"TopicID" maxLength:"30" example:"456" required:"true"`
@@ -47,11 +44,13 @@ type ResBody[T any] struct {
 }
 
 func setFiberMiddleWares(app *fiber.App) {
-	app.Use(requestid.New())
+	// app.Use(requestid.New())
 	app.Use(logger.New())
 	app.Use(pprof.New())
 	app.Use(authz.NewAuthMiddleware())
 	app.Use(fiberRecover.New())
+	app.Get("/debug/fgprof", adaptor.HTTPHandler(fgprof.Handler()))
+	app.Get("go", adaptor.HTTPHandlerFunc(webstack.SnapshotHandler))
 }
 
 func registerEndpoints(api huma.API, handler Handler) {

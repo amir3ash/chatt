@@ -8,17 +8,17 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	conf, err := config.New()
 	if err != nil {
 		panic(err)
 	}
 
-	cli, err := api.Initialize(conf)
+	app, err := api.Initialize(conf)
 	if err != nil {
 		panic(err)
 	}
-	
-	cli.Run()
+
+	app.Listen(":8888")
 }

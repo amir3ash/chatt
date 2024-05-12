@@ -14,7 +14,7 @@ type Handler struct {
 
 }
 
-func (h *Handler) getListMesgLink(in *getMessagesInput) string {
+func (h *Handler) getListMesgLink(in *getMessagesInput) string { // TODO escape user supplied data ( possible open redirect)
 	link := fmt.Sprintf("%s/topics/%s/messages?limit=%d", h.baseUrl, in.TopicID, in.Limit)
 	if in.AfterID != "" {
 		link += "&after_id=" + in.AfterID
@@ -29,8 +29,9 @@ func (h *Handler) listMessages(ctx context.Context, in *getMessagesInput) (*getM
 	messages, err := h.svc.ListMessages(ctx, in.TopicID,
 		core.Pagination{BeforeID: in.BeforeID, AfterID: in.AfterID, Limit: in.Limit})
 	if err != nil {
-		return nil, err
+		return nil, humaErr(err)
 	}
+
 	res := &getMessagesOutput{}
 	res.Body.Messages = messages
 
@@ -51,10 +52,16 @@ func (h *Handler) listMessages(ctx context.Context, in *getMessagesInput) (*getM
 
 func (h *Handler) sendMessage(ctx context.Context, input *sendMessageInput) (*ResBody[core.Message], error) {
 	msg, err := h.svc.SendMessage(ctx, input.TopicID, input.Body.Message)
-	if err == core.TopicNotFound {
-		return nil, huma.Error404NotFound("Topic Not Found", err)
-	} else if err != nil {
-		return nil, err
+	if err != nil {
+		return nil, humaErr(err)
 	}
 	return &ResBody[core.Message]{Body: msg}, err
+}
+
+func humaErr(err error) error {
+	if err == core.ErrNotAuthorized {
+		return huma.Error403Forbidden("not authorized")
+	}
+
+	return err
 }

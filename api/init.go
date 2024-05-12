@@ -8,7 +8,6 @@ import (
 	"chat-system/ws"
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -19,7 +18,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func Initialize(conf *config.Confing) (huma.CLI, error) {
+func Initialize(conf *config.Confing) (*fiber.App, error) {
 	app := fiber.New()
 
 	setFiberMiddleWares(app)
@@ -73,12 +72,5 @@ func Initialize(conf *config.Confing) (huma.CLI, error) {
 		},
 	}))
 
-	client := huma.NewCLI(func(hooks huma.Hooks, options *Options) {
-		hooks.OnStart(func() {
-			fmt.Printf("Starting server on port %d...\n", options.Port)
-			app.Listen(":" + strconv.Itoa(options.Port))
-		})
-	})
-
-	return client, nil
+	return app, nil
 }
