@@ -3,10 +3,9 @@ package ws
 import (
 	"chat-system/core"
 	"encoding/json"
+	"hash/fnv"
 	"log/slog"
 	"sync"
-
-	"github.com/gofiber/contrib/websocket"
 )
 
 type whoCanReadTopic interface {
@@ -18,10 +17,14 @@ type roomServer struct {
 	broker *wsServer
 	authz  whoCanReadTopic
 	rooms  map[string]*room
+	sync.RWMutex
 }
 
+var workerIns = newShardedWorker(16)
+
 func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
-	server := roomServer{b, authz, make(map[string]*room)}
+	go workerIns.run()
+	server := roomServer{b, authz, make(map[string]*room), sync.RWMutex{}}
 
 	b.OnConnect(func(c conn) {
 		serverTopics := make([]string, 0, len(server.rooms))
@@ -42,10 +45,16 @@ func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
 	})
 	return &server
 }
-
+func (r *roomServer) getRoom(topicID string) *room {
+	var roomIns *room
+	r.RLock()
+	roomIns = r.rooms[topicID]
+	r.RUnlock()
+	return roomIns
+}
 func (r *roomServer) SendMessageTo(topicId string, msg *core.Message) {
-	room, ok := r.rooms[topicId]
-	if !ok {
+	room := r.getRoom(topicId)
+	if room == nil {
 		room = r.createRoom(topicId)
 	}
 
@@ -53,6 +62,13 @@ func (r *roomServer) SendMessageTo(topicId string, msg *core.Message) {
 }
 
 func (r *roomServer) createRoom(topicId string) *room {
+	r.Lock()
+	defer r.Unlock()
+	room, ok := r.rooms[topicId]
+	if ok {
+		return room
+	}
+
 	userIds, err := r.authz.WhoCanWatchTopic(topicId)
 	if err != nil {
 		slog.Error("error in calling WhoCanWatchTopic", slog.String("topicId", topicId), "err", err)
@@ -60,7 +76,7 @@ func (r *roomServer) createRoom(topicId string) *room {
 
 	userConnections := r.broker.findConnectionsForUsers(userIds)
 	slog.Debug("roomServer.createRoom", "topicId", topicId, "userConns", userConnections)
-	room := newRoom(topicId, userConnections)
+	room = newRoom(topicId, userConnections)
 	r.rooms[topicId] = room
 	r.broker.registerOnDisconnect(room)
 
@@ -73,20 +89,21 @@ func (r *roomServer) createRoom(topicId string) *room {
 }
 
 // --------------
+
 type room struct {
 	ID               string
-	onlinePersons    map[string][]conn
+	onlinePersons    *sync.Map // map<string, []conn>
 	destroyObservers []func(roomId string)
-	mu               sync.Mutex
+	mu               sync.RWMutex
 }
 
 func newRoom(id string, users []userWithConns) *room {
 	slog.Debug("creating new room", slog.String("id", id), "users", users)
-	persons := make(map[string][]conn, len(users))
+	persons := &sync.Map{}
 	for _, u := range users {
-		persons[u.userId] = u.connections
+		persons.Store(u.userId, u.connections)
 	}
-	return &room{id, persons, make([]func(string), 0), sync.Mutex{}}
+	return &room{id, persons, make([]func(string), 0), sync.RWMutex{}}
 }
 
 func (r *room) subscribeOnDestruct(f func(roomeId string)) {
@@ -97,60 +114,66 @@ func (r *room) subscribeOnDestruct(f func(roomeId string)) {
 func (r *room) addConn(c conn) {
 	slog.Debug("room.addConn called.", slog.String("userId", c.getUserId()))
 	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	userId := c.getUserId()
-	connections := r.onlinePersons[userId]
-	connections = append(connections, c)
-	r.onlinePersons[userId] = connections
-	r.mu.Unlock()
+	connections, ok := r.onlinePersons.Load(userId)
+	if ok {
+		connections = append(connections.([]conn), c)
+	} else {
+		connections = []conn{c}
+	}
+
+	r.onlinePersons.Store(userId, connections)
 }
 
 func (r *room) onDisconnect(c conn) { // called when client disconnected
 	slog.Debug("room.onDisconnect called.", slog.String("userId", c.getUserId()))
 	userId := c.getUserId()
+
 	r.mu.Lock()
-	connections := r.onlinePersons[userId]
+	defer r.mu.Unlock()
+
+	v, ok := r.onlinePersons.Load(userId)
+	if !ok {
+		return
+	}
+	connections := v.([]conn)
 
 	connections = findAndDelete(connections, c)
 
 	if len(connections) == 0 {
-		delete(r.onlinePersons, userId)
+		r.onlinePersons.Delete(userId)
 	} else {
-		r.onlinePersons[userId] = connections
+		r.onlinePersons.Store(userId, connections)
 	}
-	r.mu.Unlock()
 }
 func (r *room) SendMessage(m *core.Message) { // maybe message will be inconsistence with DB
 	slog.Debug("room.SendMessage called", slog.String("topicId", m.TopicID), "onlinepersions", r.onlinePersons)
 	bytes, _ := json.Marshal(m)
 
-	for _, connections := range r.onlinePersons {
-		for _, v := range connections {
-			v.sendBytes(bytes)
+	r.onlinePersons.Range(func(key, value any) bool {
+		connections := value.([]conn)
+		for i := range connections {
+			v := connections[i]
+			if v == nil {
+				continue
+			}
+			workerIns.do(v.getUserId(), func() {
+				if v == nil {
+					return
+				}
+				v.sendBytes(bytes)
+			})
 		}
-	}
+		return true
+	})
+
 }
 
 type conn interface {
 	getUserId() string
 	sendBytes(b []byte)
-}
-
-// ----------
-
-type connection struct {
-	websocket.Conn
-	userId string
-}
-
-func (c connection) getUserId() string {
-	return c.userId
-}
-func (c *connection) sendBytes(b []byte) {
-	err := c.WriteMessage(websocket.TextMessage, b)
-	if err != nil {
-		slog.Error("can't write to websocket", slog.String("userId", c.getUserId()), "err", err)
-	}
 }
 
 type disconnectSubscriber interface {
@@ -161,21 +184,29 @@ type wsServer struct {
 	onlineClients  map[string][]conn // connections for a userId
 	connectSubs    []func(conn)
 	disconnectSubs []disconnectSubscriber
-	mu             sync.Mutex
+	mu             sync.RWMutex
 }
 
 func NewWSServer() *wsServer {
-	return &wsServer{make(map[string][]conn), []func(conn){}, []disconnectSubscriber{}, sync.Mutex{}}
+	s := &wsServer{make(map[string][]conn), []func(conn){}, []disconnectSubscriber{}, sync.RWMutex{}}
+	// go s.distbuteMessages()
+	return s
 }
 
 func (b *wsServer) OnConnect(f func(conn)) {
+	b.mu.Lock()
 	b.connectSubs = append(b.connectSubs, f)
+	b.mu.Unlock()
 }
 func (b *wsServer) registerOnDisconnect(o disconnectSubscriber) {
+	b.mu.Lock()
 	b.disconnectSubs = append(b.disconnectSubs, o)
+	b.mu.Unlock()
 }
 func (b *wsServer) unRegisterOnDisconnect(o disconnectSubscriber) {
+	b.mu.Lock()
 	b.disconnectSubs = findAndDelete(b.disconnectSubs, o)
+	b.mu.Unlock()
 }
 func (b *wsServer) AddConnByPersonID(c conn, id string) {
 	b.mu.Lock()
@@ -243,4 +274,44 @@ func findAndDelete[T comparable](list []T, elem T) []T {
 		}
 	}
 	return list
+}
+
+// -----------------
+
+type workerJob func()
+type shardedWorker struct {
+	num        uint32
+	workerJobs []chan workerJob
+}
+
+// Creates multiple job chans and goroutins to shard jobs by the hash of the string
+func newShardedWorker(num uint32) shardedWorker {
+	j := make([]chan workerJob, num)
+	for i := range j {
+		j[i] = make(chan workerJob, 1)
+	}
+
+	return shardedWorker{num: num, workerJobs: j}
+}
+
+func (w shardedWorker) do(id string, f func()) {
+	index := getHash(id) % w.num
+	w.workerJobs[index] <- f
+}
+
+func (w shardedWorker) run() {
+	for i := uint32(0); i < w.num; i++ {
+		go func(workerIdx uint32) {
+			jobs := w.workerJobs[workerIdx]
+			for job := range jobs {
+				job()
+			}
+		}(i)
+	}
+}
+
+func getHash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
 }

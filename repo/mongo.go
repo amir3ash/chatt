@@ -97,6 +97,7 @@ func (r Repo) SendMsgToTopic(ctx context.Context, sender core.Sender, topicID st
 	return core.Message{
 		SenderId: msg.SenderId,
 		ID:       msg.ID.Hex(),
+		TopicID:  topicID,
 		SentAt:   msg.CreatedAt,
 		Text:     msg.Text,
 	}, nil
@@ -292,6 +293,7 @@ func (r Repo) readFromBucket(ctx context.Context, topicID string, pg core.Pagina
 		messages = append(messages, core.Message{
 			SenderId: m.SenderId,
 			ID:       m.ID.Hex(),
+			TopicID:  m.TopicID,
 			SentAt:   m.CreatedAt,
 			Text:     m.Text,
 		})

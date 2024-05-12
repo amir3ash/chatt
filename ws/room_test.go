@@ -4,6 +4,7 @@ import (
 	"chat-system/core"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 type MockConnection struct {
@@ -31,6 +32,7 @@ func Test_SendMessageTo(t *testing.T) {
 
 	go func() {
 		roomServer.SendMessageTo("hell", msg)
+		time.Sleep(200 * time.Millisecond)
 		wait <- false
 	}()
 

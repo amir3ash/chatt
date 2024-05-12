@@ -3,14 +3,30 @@ package ws
 import (
 	"chat-system/authz"
 	"cmp"
+	"math/rand"
 	"slices"
+	"strconv"
 )
+
+var mockAuthorizedUserIds []string
+
+func randomUserId() string {
+	return mockAuthorizedUserIds[rand.Int()%1001]
+}
 
 type TestAuthz struct{}
 
-// WhoCanWatchTopic implements whoCanReadTopic.
+func NewMockTestAuthz() TestAuthz {
+	mockAuthorizedUserIds = make([]string, 1001)
+	for i := range mockAuthorizedUserIds {
+		mockAuthorizedUserIds[i] = strconv.FormatInt(int64(i), 10)
+	}
+	mockAuthorizedUserIds[0] = "343"
+	return TestAuthz{}
+}
+
 func (t *TestAuthz) WhoCanWatchTopic(topicId string) ([]string, error) {
-	return []string{"343", "673"}, nil
+	return mockAuthorizedUserIds, nil
 }
 
 func (t *TestAuthz) TopicsWhichUserCanWatch(userId string, topics []string) (topicIds []string, err error) {
@@ -19,7 +35,8 @@ func (t *TestAuthz) TopicsWhichUserCanWatch(userId string, topics []string) (top
 
 type wsAuthorizer struct {
 	authz *authz.Authoriz
-} 
+}
+
 func NewWSAuthorizer(a *authz.Authoriz) wsAuthorizer {
 	return wsAuthorizer{a}
 }
