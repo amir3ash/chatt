@@ -2,20 +2,21 @@ package api
 
 import (
 	"chat-system/authz"
-	"chat-system/core"
+	"chat-system/core/messages"
+	"context"
+	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/felixge/fgprof"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/pprof"
 	fiberRecover "github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/adaptor"
-	"github.com/felixge/fgprof"
 	"github.com/maruel/panicparse/v2/stack/webstack"
-
 )
-
 
 type sendMessageInput struct {
 	TopicID string `path:"TopicID" maxLength:"30" example:"456" required:"true"`
@@ -33,9 +34,9 @@ type getMessagesInput struct {
 
 type getMessagesOutput struct {
 	Body struct {
-		Messages []core.Message `json:"messages"`
-		Next     string         `json:"next"`
-		Prev     string         `json:"prev"`
+		Messages []messages.Message `json:"messages"`
+		Next     string             `json:"next"`
+		Prev     string             `json:"prev"`
 	}
 }
 
@@ -67,4 +68,28 @@ func registerEndpoints(api huma.API, handler Handler) {
 		Path:          "/topics/{TopicID}/messages",
 		DefaultStatus: 201,
 	}, handler.sendMessage)
+}
+
+func Initialize(messageSVC MessageService) (*fiber.App, error) {
+	app := fiber.New()
+
+	setFiberMiddleWares(app)
+	servePromMetrics("/metrics", app)
+
+	api := humafiber.New(app, huma.DefaultConfig("Chat API", "0.0.0-alpha-0"))
+
+	otelShutdown, err := setupOTelSDK(context.TODO())
+	if err != nil {
+		return nil, fmt.Errorf("can't setup opentelementry: %w", err)
+	}
+	defer otelShutdown(context.Background())
+
+	handler := Handler{
+		messageSVC,
+		"http://127.0.0.1:8888",
+	}
+
+	registerEndpoints(api, handler)
+
+	return app, nil
 }

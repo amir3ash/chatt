@@ -1,36 +1,42 @@
-package api
+package main
 
 import (
 	"chat-system/authz"
 	"chat-system/config"
-	"chat-system/core"
-	"chat-system/repo"
+	"chat-system/core/api"
+	"chat-system/core/messages"
+	"chat-system/core/repo"
 	"chat-system/ws"
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/healthcheck"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func Initialize(conf *config.Confing) (*fiber.App, error) {
-	app := fiber.New()
+func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	setFiberMiddleWares(app)
-	servePromMetrics("/metrics", app)
-
-	api := humafiber.New(app, huma.DefaultConfig("Chat API", "0.0.0-alpha-1"))
-
-	otelShutdown, err := setupOTelSDK(context.TODO())
+	conf, err := config.New()
 	if err != nil {
-		return nil, fmt.Errorf("can't setup opentelementry: %w", err)
+		panic(err)
 	}
-	defer otelShutdown(context.Background())
+
+	app, err := prepare(conf)
+	if err != nil {
+		panic(err)
+	}
+
+	err = app.Listen(":8888")
+	panic(err)
+}
+
+func prepare(conf *config.Confing) (*fiber.App, error) {
 
 	mongoOptions := &options.ClientOptions{}
 	mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
@@ -45,7 +51,6 @@ func Initialize(conf *config.Confing) (*fiber.App, error) {
 	}
 
 	broker := ws.NewWSServer()
-	ws.RunServer(app, broker)
 
 	authzed, err := authz.NewInsecureAuthZedCli(authz.Conf{BearerToken: conf.SpiceDBSecret, ApiUrl: conf.SpiceDbUrl})
 	if err != nil {
@@ -55,15 +60,14 @@ func Initialize(conf *config.Confing) (*fiber.App, error) {
 	authoriz := authz.NewAuthoriz(authzed)
 
 	roomServer := ws.NewRoomServer(broker, ws.NewWSAuthorizer(authoriz))
-	service := core.NewService(mongoRepo, roomServer, *authoriz)
-	handler := Handler{
-		service,
-		"http://127.0.0.1:8888",
+	msgSvc := messages.NewService(mongoRepo, roomServer, authoriz)
+
+	fiberApp, err := api.Initialize(msgSvc)
+	if err != nil {
+		return nil, err
 	}
-
-	registerEndpoints(api, handler)
-
-	app.Use(healthcheck.New(healthcheck.Config{
+	
+	fiberApp.Use(healthcheck.New(healthcheck.Config{
 		ReadinessProbe: func(c *fiber.Ctx) bool {
 			ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
 			defer cancel()
@@ -72,5 +76,5 @@ func Initialize(conf *config.Confing) (*fiber.App, error) {
 		},
 	}))
 
-	return app, nil
+	return fiberApp, nil
 }

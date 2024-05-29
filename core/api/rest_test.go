@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"chat-system/core"
-	mock_core "chat-system/core/mock"
+	mock_api "chat-system/core/api/mock"
+	"chat-system/core/messages"
 
 	"github.com/danielgtaylor/huma/v2/humatest"
 	"go.uber.org/mock/gomock"
@@ -41,7 +41,7 @@ func Test_restlistMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := mock_core.NewMockService(ctrl)
+			m := mock_api.NewMockMessageService(ctrl)
 
 			_, api := humatest.New(t)
 			handler := Handler{
@@ -54,9 +54,9 @@ func Test_restlistMessages(t *testing.T) {
 			if tt.expectSvcCalled {
 				m.
 					EXPECT().
-					ListMessages(gomock.AssignableToTypeOf(contextType), gomock.Eq(tt.topicId), gomock.Eq(core.Pagination{Limit: tt.expectedPageSize})).
-					DoAndReturn(func(context.Context, string, core.Pagination) ([]core.Message, error) {
-						return []core.Message{{ID: "id-secret-42"}}, nil
+					ListMessages(gomock.AssignableToTypeOf(contextType), gomock.Eq(tt.topicId), gomock.Eq(messages.Pagination{Limit: tt.expectedPageSize})).
+					DoAndReturn(func(context.Context, string, messages.Pagination) ([]messages.Message, error) {
+						return []messages.Message{{ID: "id-secret-42"}}, nil
 					})
 			}
 
@@ -90,7 +90,7 @@ func Test_restSendMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := mock_core.NewMockService(ctrl)
+			m := mock_api.NewMockMessageService(ctrl)
 
 			_, api := humatest.New(t)
 			handler := Handler{
@@ -104,8 +104,8 @@ func Test_restSendMessage(t *testing.T) {
 				m.
 					EXPECT().
 					SendMessage(gomock.AssignableToTypeOf(contextType), gomock.Eq(tt.topicId), gomock.Eq(tt.message)).
-					DoAndReturn(func(context.Context, string, string) (core.Message, error) {
-						return core.Message{ID: "id-secret-42"}, nil
+					DoAndReturn(func(context.Context, string, string) (messages.Message, error) {
+						return messages.Message{ID: "id-secret-42"}, nil
 					})
 			}
 

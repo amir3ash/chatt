@@ -1,7 +1,7 @@
 package repo
 
 import (
-	"chat-system/core"
+	"chat-system/core/messages"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -30,7 +30,7 @@ type pagination struct {
 	BeforeID primitive.ObjectID
 }
 
-func newMPaginatin(c core.Pagination) (p pagination) {
+func newMPaginatin(c messages.Pagination) (p pagination) {
 	p.BeforeID, _ = primitive.ObjectIDFromHex("ffffffffffffffffffffffff")
 	p.AfterId = [12]byte{}
 
@@ -78,11 +78,11 @@ func NewMongoRepo(cli *mongo.Client) (*Repo, error) {
 	return repo, nil
 }
 
-func (r Repo) ListMessages(ctx context.Context, topicID string, pg core.Pagination) ([]core.Message, error) {
+func (r Repo) ListMessages(ctx context.Context, topicID string, pg messages.Pagination) ([]messages.Message, error) {
 	return r.readFromBucket(ctx, topicID, pg)
 }
 
-func (r Repo) SendMsgToTopic(ctx context.Context, sender core.Sender, topicID string, message string) (core.Message, error) {
+func (r Repo) SendMsgToTopic(ctx context.Context, sender messages.Sender, topicID string, message string) (messages.Message, error) {
 	msg := &Message{
 		SenderId: sender.ID,
 		Text:     message,
@@ -91,10 +91,10 @@ func (r Repo) SendMsgToTopic(ctx context.Context, sender core.Sender, topicID st
 
 	err := r.messages.CreateWithCtx(ctx, msg)
 	if err != nil {
-		return core.Message{}, err
+		return messages.Message{}, err
 	}
 
-	return core.Message{
+	return messages.Message{
 		SenderId: msg.SenderId,
 		ID:       msg.ID.Hex(),
 		TopicID:  topicID,
@@ -221,7 +221,7 @@ func (r Repo) writeToBucket(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (r Repo) readFromBucket(ctx context.Context, topicID string, pg core.Pagination) ([]core.Message, error) {
+func (r Repo) readFromBucket(ctx context.Context, topicID string, pg messages.Pagination) ([]messages.Message, error) {
 	p := newMPaginatin(pg)
 	sortStage := bson.M{
 		"$sort": bson.M{
@@ -282,7 +282,7 @@ func (r Repo) readFromBucket(ctx context.Context, topicID string, pg core.Pagina
 
 	defer cur.Close(context.Background())
 
-	messages := make([]core.Message, 0, (pg.Limit))
+	res := make([]messages.Message, 0, (pg.Limit))
 
 	for cur.Next(ctx) {
 		m := Message{}
@@ -290,7 +290,7 @@ func (r Repo) readFromBucket(ctx context.Context, topicID string, pg core.Pagina
 			return nil, fmt.Errorf("cant decode cursor's element into Message{}, err:%w", err)
 		}
 
-		messages = append(messages, core.Message{
+		res = append(res, messages.Message{
 			SenderId: m.SenderId,
 			ID:       m.ID.Hex(),
 			TopicID:  m.TopicID,
@@ -299,7 +299,7 @@ func (r Repo) readFromBucket(ctx context.Context, topicID string, pg core.Pagina
 		})
 	}
 
-	return messages, nil
+	return res, nil
 }
 
 // returns ObjectID from time.Time for filtering based on creation date
