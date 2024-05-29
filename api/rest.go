@@ -20,13 +20,13 @@ import (
 type sendMessageInput struct {
 	TopicID string `path:"TopicID" maxLength:"30" example:"456" required:"true"`
 	Body    struct {
-		Message string `json:"message" maxLength:"300" required:"true"`
+		Message string `json:"message" minLength:"1" maxLength:"300" required:"true"`
 	}
 }
 
 type getMessagesInput struct {
 	TopicID  string `path:"TopicID" maxLength:"30" example:"456" required:"true"`
-	Limit    int    `query:"limit" max:"50" default:"20"`
+	Limit    int    `query:"limit" minimum:"1" maximum:"50" default:"20"`
 	BeforeID string `query:"before_id" maxLength:"30"`
 	AfterID  string `query:"after_id" maxLength:"30"`
 }

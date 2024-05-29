@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 )
+//go:generate mockgen -typed -source=interfaces.go -destination=mock/interfaces.go
+
 
 type Repository interface {
 	ListMessages(ctx context.Context, topicID string, p Pagination) ([]Message, error)
