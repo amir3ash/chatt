@@ -2,7 +2,8 @@
 
 - Suports websocket, http
 - Reducing number of goroutins for websockets by using ED design
+- Websocket Server consumes new messages using CDC
 - Implements access control via SpiceDB
-- Reduces number of requests to SpiceDB via BulkCheck
 - Saves messages to mongodb via bucket pattern
 - Clean architecture
+- OpenTelementry support
