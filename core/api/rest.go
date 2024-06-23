@@ -3,19 +3,18 @@ package api
 import (
 	"chat-system/authz"
 	"chat-system/core/messages"
-	"context"
-	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
+	"github.com/gofiber/contrib/otelfiber"
 	"github.com/gofiber/fiber/v2"
-
-	"github.com/felixge/fgprof"
-	"github.com/gofiber/fiber/v2/middleware/adaptor"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	"go.opentelemetry.io/otel"
+	// "github.com/felixge/fgprof"
+	// "github.com/gofiber/fiber/v2/middleware/adaptor"
+	// "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/pprof"
 	fiberRecover "github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/maruel/panicparse/v2/stack/webstack"
+	// "github.com/maruel/panicparse/v2/stack/webstack"
 )
 
 type sendMessageInput struct {
@@ -46,12 +45,13 @@ type ResBody[T any] struct {
 
 func setFiberMiddleWares(app *fiber.App) {
 	// app.Use(requestid.New())
-	app.Use(logger.New())
+	// app.Use(logger.New())
 	app.Use(pprof.New())
-	app.Use(authz.NewAuthMiddleware())
+	app.Use(authz.NewFiberAuthMiddleware())
 	app.Use(fiberRecover.New())
-	app.Get("/debug/fgprof", adaptor.HTTPHandler(fgprof.Handler()))
-	app.Get("go", adaptor.HTTPHandlerFunc(webstack.SnapshotHandler))
+	// app.Get("/debug/fgprof", adaptor.HTTPHandler(fgprof.Handler()))
+	// app.Get("go", adaptor.HTTPHandlerFunc(webstack.SnapshotHandler))
+	app.Use(otelfiber.Middleware(otelfiber.WithTracerProvider(otel.GetTracerProvider())))
 }
 
 func registerEndpoints(api huma.API, handler Handler) {
@@ -74,15 +74,9 @@ func Initialize(messageSVC MessageService) (*fiber.App, error) {
 	app := fiber.New()
 
 	setFiberMiddleWares(app)
-	servePromMetrics("/metrics", app)
+	// otel.ServeFiberPromMetrics("/metrics", app)
 
 	api := humafiber.New(app, huma.DefaultConfig("Chat API", "0.0.0-alpha-0"))
-
-	otelShutdown, err := setupOTelSDK(context.TODO())
-	if err != nil {
-		return nil, fmt.Errorf("can't setup opentelementry: %w", err)
-	}
-	defer otelShutdown(context.Background())
 
 	handler := Handler{
 		messageSVC,

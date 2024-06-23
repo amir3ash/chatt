@@ -11,9 +11,10 @@ export const options = {
   // Key configurations for breakpoint in this section
   executor: 'ramping-arrival-rate', //Assure load increase if the system slows
   stages: [
-    { duration: '30s', target: 60 }, // just slowly ramp-up to a HUGE load
-    { duration: '60s', target: 1000 },
-    { duration: '10s', target: 20 },
+    { duration: '3s', target: 60 }, // just slowly ramp-up to a HUGE load
+    { duration: '10s', target: 1000 },
+	{ duration: '20s', target: 1000 },
+    { duration: '3s', target: 20 },
   ],
   
 };
@@ -25,5 +26,5 @@ export const options = {
 //
 export default function() {
   http.get(`http://${host}:8888/topics/456/messages?limit=100`);
-  sleep(1);
+  sleep(0.25);
 }

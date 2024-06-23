@@ -24,6 +24,16 @@ type Message struct {
 	Text             string              `bson:"text"`
 }
 
+func (m *Message) toApiMessage() *messages.Message {
+	return &messages.Message{
+		SenderId: m.SenderId,
+		ID:       m.ID.Hex(),
+		TopicID:  m.TopicID,
+		SentAt:   m.CreatedAt,
+		Text:     m.Text,
+	}
+}
+
 type pagination struct {
 	Limit    *int64
 	AfterId  primitive.ObjectID
@@ -62,15 +72,28 @@ func NewMongoRepo(cli *mongo.Client) (*Repo, error) {
 		messages: mgm.NewCollection(db, mgm.CollName(&Message{})),
 		db:       db,
 	}
-	db.CreateCollection(context.Background(), "hist")
-	db.Collection("hist").Indexes().CreateOne(context.Background(),
-		mongo.IndexModel{Keys: bson.D{{"topicID", 1}, {"min", 1}}})
+	err := db.CreateCollection(context.Background(), "hist")
+	if err != nil {
+		slog.Error("cant create collection \"hist\"", "err", err)
+		return nil, err
+	}
+
+	unique := true
+	_, err = db.Collection("hist").Indexes().CreateOne(context.Background(),
+		mongo.IndexModel{
+			Keys:    bson.D{{Key: "topicID", Value: 1}, {Key: "min", Value: 1}},
+			Options: &options.IndexOptions{Unique: &unique},
+		})
+	if err != nil {
+		slog.Warn("cant create index for collection \"hist\"", "err", err)
+	}
 
 	go func() {
 		for range time.Tick(2 * time.Minute) {
 			slog.Debug("agregating messages into hist")
 			if _, err := repo.writeToBucket(context.Background()); err != nil {
 				slog.Error("can't aggregate messages", "err", err)
+				fmt.Println("hello from aggrgeage")
 			}
 		}
 	}()
@@ -300,6 +323,71 @@ func (r Repo) readFromBucket(ctx context.Context, topicID string, pg messages.Pa
 	}
 
 	return res, nil
+}
+
+type ChangeStream struct {
+	DocumentKey   string
+	OperationType string            // insert or delete
+	Msg           *messages.Message // will be nil for "delete" operation type
+}
+
+func (r Repo) watchMessagesChangeStream(ctx context.Context, msgChan chan<- *ChangeStream) {
+	stream, err := r.messages.Watch(context.TODO(), mongo.Pipeline{})
+	if err != nil {
+		slog.Error("can't watch messages collection", "err", err)
+		return
+	}
+	defer func() {
+		err := recover()
+		if err != nil {
+			slog.Error("recovering panic while watching change stream", "err", err)
+		}
+	}()
+
+	defer stream.Close(context.TODO())
+	defer close(msgChan)
+
+	for stream.Next(ctx) {
+		docKey := stream.Current.Lookup("documentKey").Document().Lookup("_id").ObjectID().Hex()
+		opType := stream.Current.Lookup("operationType").StringValue()
+
+		changeStream := ChangeStream{
+			DocumentKey:   docKey,
+			OperationType: opType,
+		}
+
+		if opType == "insert" {
+			doc, err := stream.Current.LookupErr("fullDocument")
+			if err != nil {
+				slog.Error("can't lookup 'fullDocument' from changeStream's document", "err", err)
+				continue
+			}
+
+			msg := &Message{}
+			err = doc.Unmarshal(msg)
+			if err != nil {
+				slog.Error("can't unmarshal changeStream's document", "err", err)
+				continue
+			}
+
+			changeStream.Msg = msg.toApiMessage()
+		}
+
+		msgChan <- &changeStream
+	}
+}
+
+// Watch for mongodb messages collection changes (using change data capture).
+// NOTE: cancel func MUST be called.
+func (r Repo) WatchMessages() (stream <-chan *ChangeStream, cancel func()) {
+	msgChan := make(chan *ChangeStream, 1)
+	ctx, cancelCtx := context.WithCancel(context.TODO())
+
+	go r.watchMessagesChangeStream(ctx, msgChan)
+
+	return msgChan, func() {
+		cancelCtx()
+	}
 }
 
 // returns ObjectID from time.Time for filtering based on creation date

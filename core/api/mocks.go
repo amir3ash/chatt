@@ -48,6 +48,6 @@ func (MockPermissionChecker) Check(ctx context.Context, userId, perm, objType, o
 }
 
 func newMockService() MessageService {
-	var svc MessageService = messages.NewService(MockRepo{}, &MockBroker{}, MockPermissionChecker{})
+	var svc MessageService = messages.NewService(MockRepo{}, MockPermissionChecker{})
 	return svc
 }

@@ -1,7 +1,7 @@
 package ws
 
 import (
-	"chat-system/core"
+	"chat-system/core/messages"
 	"encoding/json"
 	"hash/fnv"
 	"log/slog"
@@ -52,7 +52,7 @@ func (r *roomServer) getRoom(topicID string) *room {
 	r.RUnlock()
 	return roomIns
 }
-func (r *roomServer) SendMessageTo(topicId string, msg *core.Message) {
+func (r *roomServer) SendMessageTo(topicId string, msg *messages.Message) {
 	room := r.getRoom(topicId)
 	if room == nil {
 		room = r.createRoom(topicId)
@@ -148,7 +148,8 @@ func (r *room) onDisconnect(c conn) { // called when client disconnected
 		r.onlinePersons.Store(userId, connections)
 	}
 }
-func (r *room) SendMessage(m *core.Message) { // maybe message will be inconsistence with DB
+
+func (r *room) SendMessage(m *messages.Message) { // maybe message will be inconsistence with DB
 	slog.Debug("room.SendMessage called", slog.String("topicId", m.TopicID), "onlinepersions", r.onlinePersons)
 	bytes, _ := json.Marshal(m)
 

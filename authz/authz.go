@@ -8,6 +8,7 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/authzed/authzed-go/v1"
 	"github.com/authzed/grpcutil"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -32,6 +33,7 @@ func NewInsecureAuthZedCli(conf Conf) (*authzed.Client, error) {
 		conf.ApiUrl,
 		systemCerts,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 
 	if err != nil {
