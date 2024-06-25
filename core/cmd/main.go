@@ -51,9 +51,9 @@ func setupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 		err = errors.Join(inErr, shutdown(ctx))
 	}
 
-	// // Set up propagator.
-	// prop := newPropagator()
-	// otel.SetTextMapPropagator(prop)
+	// Set up propagator.
+	prop := newPropagator()
+	otel.SetTextMapPropagator(prop)
 
 	// Set up trace provider.
 	tracerProvider, err := newTraceProvider()
@@ -86,10 +86,11 @@ func setupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 }
 
 func newPropagator() propagation.TextMapPropagator {
-	return propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	)
+	// return propagation.NewCompositeTextMapPropagator(
+	// 	propagation.TraceContext{},
+	// 	propagation.Baggage{},
+	// )
+	return propagation.TraceContext{}
 }
 
 func newTraceProvider() (*trace.TracerProvider, error) {
@@ -100,7 +101,7 @@ func newTraceProvider() (*trace.TracerProvider, error) {
 	)
 
 	traceExporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint("jaeger-collector:4318"),
+		otlptracehttp.WithEndpoint("jaeger-collector.default.svc.cluster.local:4318"),
 		otlptracehttp.WithInsecure(),
 		otlptracehttp.WithCompression(otlptracehttp.GzipCompression),
 	)

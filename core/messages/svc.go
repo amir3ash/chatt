@@ -5,9 +5,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/trace"
 )
 
 var ErrNotAuthorized = errors.New("not authorized")
@@ -15,9 +12,7 @@ var ErrNotAuthorized = errors.New("not authorized")
 // var TopicNotFound = errors.New("topic not found")
 
 func NewService(repo Repository, auth permissionChecker) *svc {
-	tracer := otel.GetTracerProvider().Tracer("messages/service")
-	
-	return &svc{repo: repo, authz: auth, tracer: tracer}
+	return &svc{repo: repo, authz: auth}
 }
 
 type Sender struct{ ID string }
@@ -38,8 +33,6 @@ type Pagination struct {
 type svc struct {
 	repo  Repository
 	authz permissionChecker
-
-	tracer trace.Tracer
 }
 
 func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]Message, error) {
@@ -57,9 +50,6 @@ func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]
 }
 
 func (s *svc) SendMessage(ctx context.Context, topicID string, message string) (Message, error) {
-	ctx, span := s.tracer.Start(ctx, "messageSvc-SendMessage")
-	defer span.End()
-
 	userId := authz.UserIdFromCtx(ctx)
 
 	can, err := s.authz.Check(ctx, userId, "write", "topic", topicID)
