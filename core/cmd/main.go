@@ -6,12 +6,14 @@ import (
 	"chat-system/core/api"
 	"chat-system/core/messages"
 	"chat-system/core/repo"
+	kafkarep "chat-system/core/repo/kafkaRep"
 	"context"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2/middleware/healthcheck"
+	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
@@ -145,6 +147,56 @@ func newLoggerProvider() (*log.LoggerProvider, error) {
 	return loggerProvider, nil
 }
 
+func getMessageRepository(conf *config.Confing) messages.Repository {
+	type messageRepoType int
+
+	const (
+		mongoRepoT messageRepoType = iota
+		kafkaRepoT
+	)
+	const repoType = kafkaRepoT
+	
+	var mongoCli *mongo.Client
+
+	if repoType == mongoRepoT || repoType == kafkaRepoT {
+		mongoOptions := &options.ClientOptions{}
+		mongoOptions.Monitor = otelmongo.NewMonitor()
+		mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
+
+		var err error
+		mongoCli, err = mongo.Connect(context.TODO(), mongoOptions)
+		if err != nil {
+			panic(fmt.Errorf("can't create mongodb client: %w", err))
+		}
+	}
+
+	switch repoType {
+	case mongoRepoT:
+		mongoRepo, err := repo.NewMongoRepo(mongoCli)
+		if err != nil {
+			panic(fmt.Errorf("can't create mongodb repo: %w", err))
+		}
+
+		return mongoRepo
+
+	case kafkaRepoT:
+		kafkaWriter := &kafka.Writer{
+			Addr:                   kafka.TCP("kafka-controller-headless.default.svc.cluster.local"),
+			Topic:                  "chat-messages",
+			AllowAutoTopicCreation: true,
+			Balancer:               &kafka.LeastBytes{},
+			RequiredAcks:           kafka.RequireOne,
+			// Transport: kafka.DefaultTransport,
+		}
+
+		db := mongoCli.Database("chatting2")
+		repo := kafkarep.NewKafkaRepo(kafkaWriter, db)
+		return repo
+	}
+
+	return nil
+}
+
 func main() {
 	conf, err := config.New()
 	if err != nil {
@@ -157,19 +209,6 @@ func main() {
 	}
 	defer otelShutdown(context.Background())
 
-	mongoOptions := &options.ClientOptions{}
-	mongoOptions.Monitor = otelmongo.NewMonitor()
-	mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
-	mongoCli, err := mongo.Connect(context.TODO(), mongoOptions)
-	if err != nil {
-		panic(fmt.Errorf("can't create mongodb client: %w", err))
-	}
-
-	mongoRepo, err := repo.NewMongoRepo(mongoCli)
-	if err != nil {
-		panic(fmt.Errorf("can't create mongodb repo: %w", err))
-	}
-
 	authzed, err := authz.NewInsecureAuthZedCli(authz.Conf{BearerToken: conf.SpiceDBToken, ApiUrl: conf.SpiceDbUrl})
 	if err != nil {
 		panic(fmt.Errorf("can't create authzed client: %w", err))
@@ -177,7 +216,9 @@ func main() {
 
 	authoriz := authz.NewAuthoriz(authzed)
 
-	fiberApp, err := api.Initialize(messages.NewService(mongoRepo, authoriz))
+	messageRepo := getMessageRepository(conf)
+
+	fiberApp, err := api.Initialize(messages.NewService(messageRepo, authoriz))
 	if err != nil {
 		panic(err)
 	}

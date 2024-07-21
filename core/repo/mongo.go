@@ -18,13 +18,13 @@ import (
 type Message struct {
 	// DefaultModel adds _id, created_at and updated_at fields to the Model.
 	mgm.DefaultModel `bson:",inline"`
-	TopicID          string              `bson:"topicID"`
-	SenderId         string              `bson:"senderID"`
+	TopicID          string              `bson:"topicID" json:"topicId"`
+	SenderId         string              `bson:"senderID" json:"senderId"`
 	Timestamp        primitive.Timestamp `bson:"ts"`
-	Text             string              `bson:"text"`
+	Text             string              `bson:"text" json:"text"`
 }
 
-func (m *Message) toApiMessage() *messages.Message {
+func (m *Message) ToApiMessage() *messages.Message {
 	return &messages.Message{
 		SenderId: m.SenderId,
 		ID:       m.ID.Hex(),
@@ -40,7 +40,7 @@ type pagination struct {
 	BeforeID primitive.ObjectID
 }
 
-func newMPaginatin(c messages.Pagination) (p pagination) {
+func NewMPaginatin(c messages.Pagination) (p pagination) {
 	p.BeforeID, _ = primitive.ObjectIDFromHex("ffffffffffffffffffffffff")
 	p.AfterId = [12]byte{}
 
@@ -245,7 +245,7 @@ func (r Repo) writeToBucket(ctx context.Context) (bool, error) {
 }
 
 func (r Repo) readFromBucket(ctx context.Context, topicID string, pg messages.Pagination) ([]messages.Message, error) {
-	p := newMPaginatin(pg)
+	p := NewMPaginatin(pg)
 	sortStage := bson.M{
 		"$sort": bson.M{
 			"_id": 1,
@@ -370,7 +370,7 @@ func (r Repo) watchMessagesChangeStream(ctx context.Context, msgChan chan<- *Cha
 				continue
 			}
 
-			changeStream.Msg = msg.toApiMessage()
+			changeStream.Msg = msg.ToApiMessage()
 		}
 
 		msgChan <- &changeStream

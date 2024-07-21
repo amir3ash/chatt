@@ -3,8 +3,11 @@ package ws
 import (
 	"chat-system/core/repo"
 )
+type MessageWatcher interface {
+	WatchMessages() (stream <-chan *repo.ChangeStream, cancel func()) 
+}
 
-func ReadChangeStream(r *repo.Repo, server *roomServer) {
+func ReadChangeStream(r MessageWatcher, server *roomServer) {
 	stream, cancel := r.WatchMessages()
 	defer cancel()
 

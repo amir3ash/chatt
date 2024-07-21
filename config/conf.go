@@ -7,6 +7,7 @@ type Confing struct {
 	MongoPort    int    `env:"MONGO_PORT"`
 	SpiceDbUrl   string `env:"AUTHZED_URL"`
 	SpiceDBToken string `env:"AUTHZED_TOKEN"`
+	KafkaHost    string `env:"KAFKA_HOST"`
 }
 
 func New() (*Confing, error) {

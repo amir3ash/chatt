@@ -43,8 +43,10 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0 // indirect
 	github.com/jzelinskie/stringz v0.0.3 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/rogpeppe/go-internal v1.12.0 // indirect
 	github.com/samber/lo v1.39.0 // indirect
+	github.com/segmentio/kafka-go v0.4.47 // indirect
 	go.opentelemetry.io/contrib v1.17.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.27.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.2.0 // indirect
