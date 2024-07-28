@@ -1,7 +1,7 @@
-import http from 'k6/http';
-import { sleep } from 'k6';
+import { sleep, check } from 'k6';
+import { randomUser, randomArrayItem, getUserTopics, randomIntBetween} from './util.js'
+import { getMessages } from './api-util.js'
 
-const host = __ENV.HOST
 
 export const options = {
   // A number specifying the number of VUs to run concurrently.
@@ -13,18 +13,29 @@ export const options = {
   stages: [
     { duration: '3s', target: 60 }, // just slowly ramp-up to a HUGE load
     { duration: '10s', target: 1000 },
-	{ duration: '20s', target: 1000 },
+	  { duration: '20s', target: 1000 },
     { duration: '3s', target: 20 },
   ],
   
 };
 
-// The function that defines VU logic.
-//
-// See https://grafana.com/docs/k6/latest/examples/get-started-with-k6/ to learn more
-// about authoring k6 scripts.
-//
+
+const { userId, cookies } = randomUser()
+const authorizedTopics = getUserTopics(userId)
+
+export function setup(){
+  return {}
+}
+
+
 export default function() {
-  http.get(`http://${host}:8888/topics/456/messages?limit=100`);
-  sleep(0.25);
+  const topic = randomArrayItem(authorizedTopics)
+
+  const res = getMessages(topic, cookies.toString())
+  check(res, { 'Get Messages': (r) => r && r.status === 200 });
+  if (res.status !== 200){
+    console.error('can not list messages', {body: res.body, status:res.status, url: res.request.url})
+  }
+
+  sleep(0.5);
 }
