@@ -3,12 +3,14 @@ module chat-system
 go 1.22
 
 require (
+	github.com/Trendyol/otel-kafka-konsumer v0.0.7
 	github.com/authzed/authzed-go v0.11.1
 	github.com/authzed/grpcutil v0.0.0-20240123194739-2ea1e3d2d98b
 	github.com/danielgtaylor/huma/v2 v2.14.0
 	github.com/go-netty/go-netty-ws v1.0.7
 	github.com/gofiber/fiber/v2 v2.52.4
 	github.com/kamva/mgm/v3 v3.5.0
+	github.com/segmentio/kafka-go v0.4.47
 	go.mongodb.org/mongo-driver v1.15.0
 	go.opentelemetry.io/otel/exporters/stdout/stdoutlog v0.3.0
 	go.opentelemetry.io/otel/exporters/stdout/stdoutmetric v1.27.0
@@ -37,16 +39,11 @@ require (
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
-	github.com/gofiber/utils v0.0.10 // indirect
-	github.com/gorilla/schema v1.1.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0 // indirect
 	github.com/jzelinskie/stringz v0.0.3 // indirect
-	github.com/kr/text v0.2.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.15 // indirect
-	github.com/rogpeppe/go-internal v1.12.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/samber/lo v1.39.0 // indirect
-	github.com/segmentio/kafka-go v0.4.47 // indirect
 	go.opentelemetry.io/contrib v1.17.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.27.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.2.0 // indirect
@@ -60,7 +57,6 @@ require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gofiber/contrib/otelfiber v1.0.10
-	github.com/gofiber/fiber v1.14.6
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
@@ -82,8 +78,6 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo v0.52.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.52.0
 	go.opentelemetry.io/otel v1.27.0
-	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.3.0
-	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.27.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.27.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.27.0
 	go.opentelemetry.io/otel/sdk/metric v1.27.0

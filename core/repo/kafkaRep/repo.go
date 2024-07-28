@@ -11,21 +11,36 @@ import (
 	"log/slog"
 	"time"
 
+	otelkafkakonsumer "github.com/Trendyol/otel-kafka-konsumer"
 	"github.com/kamva/mgm/v3"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
 type kafkaRepo struct {
-	writer *kafka.Writer
+	writer *otelkafkakonsumer.Writer
 	coll   mgm.Collection
 }
 
 func NewKafkaRepo(kafkaWriter *kafka.Writer, db *mongo.Database) *kafkaRepo {
 	coll := mgm.NewCollection(db, mgm.CollName(&mongoAggr{}))
-	return &kafkaRepo{writer: kafkaWriter, coll: *coll}
+	writer, err := otelkafkakonsumer.NewWriter(
+		kafkaWriter,
+		otelkafkakonsumer.WithAttributes(
+			[]attribute.KeyValue{
+				semconv.MessagingKafkaClientIDKey.String(kafkaWriter.Stats().ClientID),
+			},
+		),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	return &kafkaRepo{writer: writer, coll: *coll}
 }
 
 func (k kafkaRepo) ListMessages(ctx context.Context, topicID string, pg messages.Pagination) ([]messages.Message, error) {
@@ -116,15 +131,11 @@ func (k kafkaRepo) SendMsgToTopic(ctx context.Context, sender messages.Sender, t
 		Value: body,
 	}
 
-	err = k.writer.WriteMessages(ctx, kafkaMesg)
+	err = k.writer.WriteMessage(ctx, kafkaMesg)
 	if err != nil {
-		slog.ErrorContext(ctx, "can not write the message to kafka", "kafkaTopic", k.writer.Topic, "err", err)
-
+		slog.ErrorContext(ctx, "can not write the message to kafka", "kafkaTopic", k.writer.W.Topic, "err", err)
 	}
-	// if errors.Is(err, kafka.LeaderNotAvailable) || errors.Is(err, context.DeadlineExceeded) {
-	// 	time.Sleep(time.Millisecond * 250)
-	// 	continue
-	// }
+	
 
 	return *mongoMesg.ToApiMessage(), err
 }

@@ -20,7 +20,7 @@ type Message struct {
 	mgm.DefaultModel `bson:",inline"`
 	TopicID          string              `bson:"topicID" json:"topicId"`
 	SenderId         string              `bson:"senderID" json:"senderId"`
-	Timestamp        primitive.Timestamp `bson:"ts"`
+	Timestamp        primitive.Timestamp `bson:"ts" json:"-"`
 	Text             string              `bson:"text" json:"text"`
 }
 

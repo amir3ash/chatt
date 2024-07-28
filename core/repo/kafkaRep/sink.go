@@ -10,12 +10,18 @@ import (
 	"sync"
 	"time"
 
+	otelkafkakonsumer "github.com/Trendyol/otel-kafka-konsumer"
 	"github.com/kamva/mgm/v3"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type mongoAggr struct {
@@ -32,14 +38,14 @@ type MongoTransactionErr struct {
 }
 
 type MongoConnect struct {
-	reader       *kafka.Reader
-	mongoCli     *mongo.Client
-	coll         mgm.Collection
-	ctx          context.Context
-	cancel       context.CancelFunc
-	msgMap       map[string][]repo.Message // topicId -> messages
-	lastKafkaMsg kafka.Message
-	mu           sync.Mutex
+	reader   *otelkafkakonsumer.Reader
+	mongoCli *mongo.Client
+	coll     mgm.Collection
+	ctx      context.Context
+	cancel   context.CancelFunc
+	msgChan chan kafka.Message
+	mu      sync.Mutex
+	tracer  trace.Tracer
 }
 
 func NewMongoConnect(ctx context.Context, mongoCli *mongo.Client, kafkaReader *kafka.Reader) *MongoConnect {
@@ -47,14 +53,29 @@ func NewMongoConnect(ctx context.Context, mongoCli *mongo.Client, kafkaReader *k
 
 	coll := mgm.NewCollection(db, mgm.CollName(&mongoAggr{}))
 	ctx, cancel := context.WithCancel(ctx)
+
+	reader, _ := otelkafkakonsumer.NewReader(
+		kafkaReader,
+		// otelkafkakonsumer.WithTracerProvider(tp),
+		// otelkafkakonsumer.WithPropagator(propagation.TraceContext{}),
+		otelkafkakonsumer.WithAttributes(
+			[]attribute.KeyValue{
+				{Key: semconv.MessagingDestinationKey, Value: attribute.StringValue(kafkaReader.Config().Topic)},
+				semconv.MessagingDestinationKindTopic,
+				semconv.MessagingKafkaClientIDKey.String("opentel-manualcommit-cg"),
+			},
+		),
+	)
+
 	c := MongoConnect{
-		reader:   kafkaReader,
+		reader:   reader,
 		mongoCli: mongoCli,
 		coll:     *coll,
 		ctx:      ctx,
 		cancel:   cancel,
-		msgMap:   make(map[string][]repo.Message),
-		mu:       sync.Mutex{},
+		msgChan: make(chan kafka.Message),
+		mu:      sync.Mutex{},
+		tracer:  otel.Tracer("golang-mongo-connect"),
 	}
 
 	go c.run()
@@ -63,9 +84,27 @@ func NewMongoConnect(ctx context.Context, mongoCli *mongo.Client, kafkaReader *k
 	return &c
 }
 
+func (c *MongoConnect) unmarshalKafka(data []byte, v any) error {
+	err := json.Unmarshal(data, v)
+	if err != nil {
+		slog.Error("can not unmarshal kafka message", "data", data, "err", err)
+	}
+	return err
+}
+
 func (c *MongoConnect) readKafka() {
 	for {
-		kafkaMsg, err := c.reader.FetchMessage(context.TODO())
+		var kafkaMsg kafka.Message
+		var err error
+
+		select {
+		case <-c.ctx.Done():
+			return
+
+		default:
+			err = c.reader.FetchMessage(context.TODO(), &kafkaMsg)
+		}
+
 		if err != nil {
 			if err == io.EOF {
 				slog.Info("kafka fetch EOF: reader closed")
@@ -75,40 +114,72 @@ func (c *MongoConnect) readKafka() {
 			break
 		}
 
-		msg := repo.Message{}
-		err = json.Unmarshal(kafkaMsg.Value, &msg)
-		if err != nil {
-			slog.Error("can not unmarshal kafka message", "msg", kafkaMsg.Value, "err", err)
-			continue
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case c.msgChan <- kafkaMsg:
+
 		}
-
-		c.appendMessage(msg, kafkaMsg)
 	}
-
-}
-
-func (c *MongoConnect) appendMessage(msg repo.Message, kakaMsg kafka.Message) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.msgMap[msg.TopicID] = append(c.msgMap[msg.TopicID], msg)
-	c.lastKafkaMsg = kakaMsg
 }
 
 func (c *MongoConnect) run() {
-	ticker := time.NewTicker(150 * time.Millisecond)
+	messages := make(chan []kafka.Message)
+
+	go func() {
+		defer close(messages)
+
+		batchSize := 50
+		batchTimout := 100 * time.Millisecond
+		msgList := make([]kafka.Message, 0)
+		timer := time.NewTimer(batchTimout)
+		defer timer.Stop()
+		
+		for {
+			timer.Reset(batchTimout)
+
+			select {
+			case kMsg, ok := <-c.msgChan:
+				if !ok {
+					return
+				}
+				msgList = append(msgList, kMsg)
+
+				if len(msgList) == batchSize {
+					messages <- msgList
+					msgList = make([]kafka.Message, 0)
+				}
+
+			case <-timer.C:
+				if len(msgList) > 0 {
+					messages <- msgList
+					msgList = make([]kafka.Message, 0)
+				}
+
+			case <-c.ctx.Done():
+				return
+			}
+
+		}
+	}()
+
 	var err error
-	for _ = range ticker.C {
+
+	for msgList := range messages {
 		for i := 0; i < 3; i++ {
 
 			select {
 			case <-c.ctx.Done():
+				return
+
 			default:
-				err = c.doTransaction(c.ctx)
+				err = c.prepareAndDoTransaction(context.TODO(), msgList)
 				if err != nil {
 					slog.Error("transaction failed", "retry", i, "err", err)
 				}
 			}
+
 			if err == nil {
 				break
 			}
@@ -118,20 +189,54 @@ func (c *MongoConnect) run() {
 			break
 		}
 	}
-
 }
 
-func (c *MongoConnect) doTransaction(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []kafka.Message) error {
+	propagator := c.reader.TraceConfig.Propagator
 
-	if len(c.msgMap) == 0 {
+	if len(msgList) == 0 {
 		return nil
 	}
 
+	slog.Info("preparing transaction", "batchLen", len(msgList), "startOffset", msgList[0].Offset)
+
+	ctx, span := c.tracer.Start(ctx, "doTransaction")
+	defer span.End()
+
+	topics := make(map[string][]repo.Message)
+	for i := range msgList {
+		kafkaMsg := msgList[i]
+
+		msg := repo.Message{}
+		err := c.unmarshalKafka(kafkaMsg.Value, &msg)
+		if err != nil {
+			return err
+		}
+
+		topics[msg.TopicID] = append(topics[msg.TopicID], msg)
+
+		// Extract tracing info from message
+		msgCtx := propagator.Extract(context.Background(), otelkafkakonsumer.NewMessageCarrier(&kafkaMsg))
+		trace.SpanFromContext(msgCtx).AddLink(trace.LinkFromContext(ctx))
+	}
+
+	err := c.doTransaction(ctx, topics, msgList[len(msgList)-1])
+
+	if err == nil {
+		span.SetStatus(codes.Ok, "OK")
+		slog.InfoContext(ctx, "tranaction finished succesfuly")
+	} else {
+		span.SetStatus(codes.Error, "transaction failed")
+		span.RecordError(err)
+	}
+
+	return err
+}
+
+func (c *MongoConnect) doTransaction(ctx context.Context, topicMap map[string][]repo.Message, commitPoint kafka.Message) error {
 	err := c.mongoCli.UseSession(ctx, func(sc mongo.SessionContext) (err error) {
 		var merged bool
-		for topic, msgList := range c.msgMap {
+		for topic, msgList := range topicMap {
 			agrr := mongoAggr{
 				Topic:    topic,
 				MinId:    msgList[0].ID,
@@ -160,7 +265,7 @@ func (c *MongoConnect) doTransaction(ctx context.Context) error {
 			return MongoTransactionErr{fmt.Errorf("mongo command failed: %w", err)}
 		}
 
-		err = c.reader.CommitMessages(ctx, c.lastKafkaMsg)
+		err = c.reader.CommitMessages(ctx, commitPoint)
 		if err != nil {
 			slog.Warn("kafka messages commit failed", "err", err)
 			return MongoTransactionErr{fmt.Errorf("kafka messages commit failed: %w", err)}
@@ -171,10 +276,8 @@ func (c *MongoConnect) doTransaction(ctx context.Context) error {
 
 	if err != nil {
 		if _, ok := err.(MongoTransactionErr); !ok {
-			slog.Error("posiblity of data loss: transaction failed but commited kafka message", "lastKafkaMsg", c.lastKafkaMsg, "err", err)
+			slog.Error("posiblity of data loss: transaction failed but commited kafka message", "commitOffset", commitPoint.Offset, "err", err)
 		}
-	} else {
-		clear(c.msgMap)
 	}
 	return err
 }
