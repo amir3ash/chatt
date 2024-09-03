@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"time"
 )
 
 const TagName = "env"
@@ -79,6 +80,16 @@ func parse(cType reflect.Type, cVal reflect.Value) error {
 
 func setField(fieldVal reflect.Value, fieldKind reflect.Kind, envVariable string) error {
 	if !fieldVal.CanSet() {
+		return nil
+	}
+
+	switch fieldVal.Interface().(type) {
+	case time.Duration:
+		v, err := time.ParseDuration(envVariable)
+		if err != nil {
+			return err
+		}
+		fieldVal.Set(reflect.ValueOf(v))
 		return nil
 	}
 

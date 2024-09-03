@@ -3,6 +3,7 @@ package config
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 type mockEnvs map[string]string
@@ -13,6 +14,15 @@ func (m mockEnvs) LookupEnv(s string) (string, bool) {
 }
 
 func Test_parse(t *testing.T) {
+	testField(t, &struct {
+		A time.Duration `env:"Dur"`
+	}{}, mockEnvs{"Dur": "2ms"}, 2*time.Millisecond, false)
+
+	testField(t, &struct {
+		A *time.Duration `env:"Dur"`
+	}{}, mockEnvs{"Dur": "2s"}, 2*time.Second, false)
+
+
 	testField(t, &struct {
 		A int `env:"AGE"`
 	}{}, mockEnvs{"AGE": "23"}, 23, false)
@@ -72,7 +82,7 @@ func Test_parse(t *testing.T) {
 	testField(t, &struct {
 		A bool `env:"IS_TEST"`
 	}{}, mockEnvs{"IS_TEST": "NOT_EXPECTED"}, false, true)
-	
+
 	testField(t, &struct {
 		A *bool `env:"IS_TEST"`
 	}{}, mockEnvs{"IS_TEST": "true"}, true, false)
@@ -91,7 +101,7 @@ func TestNestedConf(t *testing.T) {
 		N    int `env:"NUM"`
 		Test nested
 	}
-	type testConfPointer struct{
+	type testConfPointer struct {
 		N    int `env:"NUM"`
 		Test *nested
 	}
@@ -136,7 +146,7 @@ func testField[T any](t *testing.T, conf *T, envs mockEnvs, wants any, wantsErr 
 	// 	return
 	// }
 
-	fValue :=  elm.Field(0)
+	fValue := elm.Field(0)
 	if fValue.Kind() == reflect.Ptr {
 		fValue = fValue.Elem()
 	}
