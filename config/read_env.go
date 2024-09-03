@@ -47,15 +47,20 @@ func parse(cType reflect.Type, cVal reflect.Value) error {
 		field := cType.Field(i)
 
 		tag := field.Tag
-		varName, ok := tag.Lookup(TagName)
-		if !ok && !isStruct(field) {
+		varName, hasEnv := tag.Lookup(TagName)
+		if !hasEnv && !isStruct(field) {
 			continue
 		}
 
 		required := tag.Get("required") == "true"
+		envVariable, hasEnv := lookupEnv(varName)
 
-		envVariable, ok := lookupEnv(varName)
-		if !isStruct(field) && (!ok || envVariable == "") {
+		if defaultValue, hasDef := tag.Lookup("default"); !hasEnv && hasDef {
+			envVariable = defaultValue
+			hasEnv = true
+		}
+
+		if !isStruct(field) && (!hasEnv || envVariable == "") {
 			if required {
 				return fmt.Errorf("environment variable %s is required", varName)
 			}

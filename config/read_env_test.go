@@ -22,6 +22,10 @@ func Test_parse(t *testing.T) {
 	}{}, mockEnvs{"AGE": "50"}, 50, false)
 
 	testField(t, &struct {
+		A int `env:"AGE" default:"23"`
+	}{}, mockEnvs{}, 23, false)
+
+	testField(t, &struct {
 		A int `env:"AGE"`
 	}{}, mockEnvs{"AGE": "23,"}, 0, true)
 
@@ -52,6 +56,10 @@ func Test_parse(t *testing.T) {
 	testField(t, &struct {
 		A bool `env:"IS_TEST"`
 	}{}, mockEnvs{"IS_TEST": "TRUE"}, true, false)
+
+	testField(t, &struct {
+		A bool `env:"IS_TEST" default:"true"`
+	}{}, mockEnvs{}, true, false)
 
 	testField(t, &struct {
 		A bool `env:"IS_TEST"`
