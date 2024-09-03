@@ -62,7 +62,7 @@ func prepare(conf *config.Confing) error {
 
 	roomServer := ws.NewRoomServer(broker, ws.NewWSAuthorizer(authoriz))
 
-	msgWatcher ,err := getMessageWatcher(conf)
+	msgWatcher, err := getMessageWatcher(conf)
 	if err != nil {
 		return err
 	}
