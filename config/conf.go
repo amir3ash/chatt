@@ -12,7 +12,7 @@ type Confing struct {
 
 func New() (*Confing, error) {
 	conf := &Confing{}
-	if err := parse(conf); err != nil {
+	if err := Parse(conf); err != nil {
 		return nil, err
 	}
 

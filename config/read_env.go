@@ -11,12 +11,14 @@ const TagName = "env"
 
 var lookupEnv = os.LookupEnv
 
-var parsers = map[reflect.Kind]func(fv reflect.Value, in string) error{
-	reflect.Int:   func(fv reflect.Value, in string) error { return setInt(fv, in, 0) },
-	reflect.Int8:  func(fv reflect.Value, in string) error { return setInt(fv, in, 8) },
-	reflect.Int16: func(fv reflect.Value, in string) error { return setInt(fv, in, 16) },
-	reflect.Int32: func(fv reflect.Value, in string) error { return setInt(fv, in, 32) },
-	reflect.Int64: func(fv reflect.Value, in string) error { return setInt(fv, in, 64) },
+var primitiveParsers = map[reflect.Kind]func(fv reflect.Value, in string) error{
+	reflect.String: func(fv reflect.Value, in string) error { fv.SetString(in); return nil },
+	reflect.Bool:   setBool,
+	reflect.Int:    func(fv reflect.Value, in string) error { return setInt(fv, in, 0) },
+	reflect.Int8:   func(fv reflect.Value, in string) error { return setInt(fv, in, 8) },
+	reflect.Int16:  func(fv reflect.Value, in string) error { return setInt(fv, in, 16) },
+	reflect.Int32:  func(fv reflect.Value, in string) error { return setInt(fv, in, 32) },
+	reflect.Int64:  func(fv reflect.Value, in string) error { return setInt(fv, in, 64) },
 
 	reflect.Uint:   func(fv reflect.Value, in string) error { return setUInt(fv, in, 0) },
 	reflect.Uint8:  func(fv reflect.Value, in string) error { return setUInt(fv, in, 8) },
@@ -25,8 +27,7 @@ var parsers = map[reflect.Kind]func(fv reflect.Value, in string) error{
 	reflect.Uint64: func(fv reflect.Value, in string) error { return setUInt(fv, in, 64) },
 }
 
-func parse[T any](conf *T) error {
-
+func Parse[T any](conf *T) error {
 	cType := reflect.TypeOf(conf).Elem()
 	if cType.Kind() != reflect.Struct {
 		return fmt.Errorf("conf type %v is not struct", cType)
@@ -34,18 +35,27 @@ func parse[T any](conf *T) error {
 
 	cVal := reflect.ValueOf(conf).Elem()
 
+	return parse(cType, cVal)
+}
+
+func parse(cType reflect.Type, cVal reflect.Value) error {
+	if cType.Kind() != reflect.Struct {
+		return fmt.Errorf("conf type %v is not struct", cType)
+	}
+
 	for i := 0; i < cType.NumField(); i++ {
 		field := cType.Field(i)
+
 		tag := field.Tag
 		varName, ok := tag.Lookup(TagName)
-		if !ok {
+		if !ok && !isStruct(field) {
 			continue
 		}
 
 		required := tag.Get("required") == "true"
 
 		envVariable, ok := lookupEnv(varName)
-		if !ok || envVariable == "" {
+		if !isStruct(field) && (!ok || envVariable == "") {
 			if required {
 				return fmt.Errorf("environment variable %s is required", varName)
 			}
@@ -53,60 +63,45 @@ func parse[T any](conf *T) error {
 		}
 
 		fieldVal := cVal.Field(i)
-		if !fieldVal.CanSet() {
-			continue
-		}
 
-		var err error
-
-		switch field.Type.Kind() {
-		case reflect.String:
-			fieldVal.SetString(envVariable)
-
-		case reflect.Int:
-			err = setInt(fieldVal, envVariable, 0)
-
-		case reflect.Int8:
-			err = setInt(fieldVal, envVariable, 8)
-
-		case reflect.Int16:
-			err = setInt(fieldVal, envVariable, 16)
-
-		case reflect.Int32:
-			err = setInt(fieldVal, envVariable, 32)
-
-		case reflect.Int64:
-			err = setInt(fieldVal, envVariable, 64)
-
-		case reflect.Uint:
-			err = setUInt(fieldVal, envVariable, 0)
-
-		case reflect.Uint8:
-			err = setUInt(fieldVal, envVariable, 8)
-
-		case reflect.Uint16:
-			err = setUInt(fieldVal, envVariable, 16)
-
-		case reflect.Uint32:
-			err = setUInt(fieldVal, envVariable, 32)
-
-		case reflect.Uint64:
-			err = setUInt(fieldVal, envVariable, 64)
-
-		case reflect.Bool:
-			b, err := strconv.ParseBool(envVariable)
-			if err != nil {
-				return fmt.Errorf("can't parse env %s: %w", varName, err)
-			}
-			fieldVal.SetBool(b)
-		}
-
-		if err != nil {
+		if err := setField(fieldVal, field.Type.Kind(), envVariable); err != nil {
 			return fmt.Errorf("can't parse env %s: %w", varName, err)
 		}
 	}
 
 	return nil
+}
+
+func setField(fieldVal reflect.Value, fieldKind reflect.Kind, envVariable string) error {
+	if !fieldVal.CanSet() {
+		return nil
+	}
+
+	if parseField, ok := primitiveParsers[fieldKind]; ok {
+		return parseField(fieldVal, envVariable)
+	}
+
+	switch fieldKind {
+	case reflect.Struct:
+		return parse(fieldVal.Type(), fieldVal)
+
+	case reflect.Ptr:
+		fType := fieldVal.Type().Elem()
+
+		newStruct := reflect.New(fType)
+		fieldVal.Set(newStruct)
+
+		return setField(fieldVal.Elem(), fieldVal.Elem().Kind(), envVariable)
+	}
+
+	return nil
+}
+
+func isStruct(sf reflect.StructField) bool {
+	kind := sf.Type.Kind()
+	return kind == reflect.Struct ||
+		(kind == reflect.Ptr &&
+			sf.Type.Elem().Kind() == reflect.Struct)
 }
 
 func setInt(fVal reflect.Value, input string, bitSize int) error {
@@ -126,5 +121,15 @@ func setUInt(fVal reflect.Value, input string, bitSize int) error {
 	}
 
 	fVal.SetUint(n)
+	return nil
+}
+
+func setBool(fVal reflect.Value, input string) error {
+	b, err := strconv.ParseBool(input)
+	if err != nil {
+		return err
+	}
+
+	fVal.SetBool(b)
 	return nil
 }
