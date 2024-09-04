@@ -26,8 +26,8 @@ import (
 
 type ReaderConf struct {
 	KafkaHost string        `env:"KAFKA_HOST"`
-	Topic     string        `env:"KAFKA_HOST" default:"chat-messages"`
-	MaxBytes  int           `env:"READER_MAX_BYTES" default:"2e6"` // 2MB
+	Topic     string        `env:"KAFKA_TOPIC" default:"chat-messages"`
+	MaxBytes  int           `env:"READER_MAX_BYTES" default:"2000000"` // 2MB
 	MaxWait   time.Duration `env:"READER_MAX_WAIT" default:"2s"`
 	GroupID   string        `env:"READER_GROUP_ID" default:"chat-messages-mongo-connect"`
 }
