@@ -10,16 +10,19 @@ import (
 	"chat-system/pkg/observe"
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/gofiber/fiber/v2/middleware/healthcheck"
-	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 )
 
-func getMessageRepository(conf *config.Confing) messages.Repository {
+type Config struct {
+	MongoDB     *repo.MongoConf
+	KafkaWriter *kafkarep.WriterConf
+	SpiceDbUrl   string `env:"AUTHZED_URL"`
+	SpiceDBToken string `env:"AUTHZED_TOKEN"`
+}
+
+func getMessageRepository(conf *Config) messages.Repository {
 	type messageRepoType int
 
 	const (
@@ -31,15 +34,7 @@ func getMessageRepository(conf *config.Confing) messages.Repository {
 	var mongoCli *mongo.Client
 
 	if repoType == mongoRepoT || repoType == kafkaRepoT {
-		mongoOptions := &options.ClientOptions{}
-		mongoOptions.Monitor = otelmongo.NewMonitor()
-		mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
-
-		var err error
-		mongoCli, err = mongo.Connect(context.TODO(), mongoOptions)
-		if err != nil {
-			panic(fmt.Errorf("can't create mongodb client: %w", err))
-		}
+		mongoCli = repo.NewInsecureMongoCli(conf.MongoDB)
 	}
 
 	switch repoType {
@@ -52,17 +47,7 @@ func getMessageRepository(conf *config.Confing) messages.Repository {
 		return mongoRepo
 
 	case kafkaRepoT:
-		kafkaWriter := &kafka.Writer{
-			Addr:                   kafka.TCP(conf.KafkaHost),
-			Topic:                  "chat-messages",
-			AllowAutoTopicCreation: true,
-			// Balancer:               &kafka.LeastBytes{},
-			RequiredAcks: kafka.RequireOne,
-			BatchTimeout: 50 * time.Millisecond,
-			Compression:  kafka.Snappy,
-
-			// Transport: kafka.DefaultTransport,
-		}
+		kafkaWriter := kafkarep.NewInsecureWriter(conf.KafkaWriter)
 
 		db := mongoCli.Database("chatting2")
 		repo := kafkarep.NewKafkaRepo(kafkaWriter, db)
@@ -73,8 +58,8 @@ func getMessageRepository(conf *config.Confing) messages.Repository {
 }
 
 func main() {
-	conf, err := config.New()
-	if err != nil {
+	conf := &Config{}
+	if err := config.Parse(conf); err != nil {
 		panic(err)
 	}
 

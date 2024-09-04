@@ -2,6 +2,7 @@ package main
 
 import (
 	"chat-system/config"
+	"chat-system/core/repo"
 	kafkarep "chat-system/core/repo/kafkaRep"
 	"context"
 	"errors"
@@ -13,10 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/segmentio/kafka-go"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
@@ -27,13 +24,16 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
-const kafkaTopic = "chat-messages"
+type Config struct {
+	KafkaReader *kafkarep.ReaderConf
+	MongoDB     *repo.MongoConf
+}
 
 func main() {
 	log.SetFlags(log.Lmicroseconds)
 
-	conf, err := config.New()
-	if err != nil {
+	conf := &Config{}
+	if err := config.Parse(conf); err != nil {
 		panic(err)
 	}
 
@@ -45,10 +45,10 @@ func main() {
 	}
 	defer otelShutdown(context.Background())
 
-	mongoCli := newMongodb(conf)
+	mongoCli := repo.NewInsecureMongoCli(conf.MongoDB)
 	defer mongoCli.Disconnect(context.Background())
 
-	kafkaReader := newKafkaReader(conf)
+	kafkaReader := kafkarep.NewInsecureReader(conf.KafkaReader)
 	defer kafkaReader.Close()
 
 	mongoKConnect := kafkarep.NewMongoConnect(context.Background(), mongoCli, kafkaReader)
@@ -59,35 +59,6 @@ func main() {
 	signal.Notify(s, syscall.SIGTERM, syscall.SIGINT)
 
 	<-s
-}
-
-func newMongodb(conf *config.Confing) *mongo.Client {
-	mongoOptions := &options.ClientOptions{}
-	mongoOptions.Monitor = otelmongo.NewMonitor()
-	mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
-	mongoCli, err := mongo.Connect(context.TODO(), mongoOptions)
-	if err != nil {
-		panic(fmt.Errorf("can't create mongodb client: %w", err))
-	}
-	return mongoCli
-}
-
-func newKafkaReader(conf *config.Confing) *kafka.Reader {
-	kafkaConf := kafka.ReaderConfig{
-		Brokers:  []string{conf.KafkaHost},
-		Topic:    kafkaTopic,
-		MaxBytes: 2e6, // 2MB
-		GroupID:  "chat-messages-mongo-connect",
-		MaxWait:  2 * time.Second,
-		MinBytes: 1,
-	}
-	err := kafkaConf.Validate()
-	if err != nil {
-		panic(err)
-	}
-
-	kafkaReader := kafka.NewReader(kafkaConf)
-	return kafkaReader
 }
 
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.

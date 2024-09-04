@@ -13,7 +13,31 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 )
+
+type MongoConf struct {
+	MongoHost string `env:"MONGO_HOST" required:"true"`
+	MongoUser string `env:"MONGO_USER" required:"true"`
+	MongoPass string `env:"MONGO_PASSWORD"`
+	MongoPort int    `env:"MONGO_PORT"`
+}
+
+func NewInsecureMongoCli(conf *MongoConf) *mongo.Client {
+	if conf.MongoPort == 0 {
+		conf.MongoPort = 27017
+	}
+	mongoOptions := &options.ClientOptions{}
+	mongoOptions.Monitor = otelmongo.NewMonitor()
+	mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
+
+	mongoCli, err := mongo.Connect(context.TODO(), mongoOptions)
+	if err != nil {
+		panic(fmt.Errorf("can't create mongodb client: %w", err))
+	}
+
+	return mongoCli
+}
 
 type Message struct {
 	// DefaultModel adds _id, created_at and updated_at fields to the Model.

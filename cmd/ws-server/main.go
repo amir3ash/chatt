@@ -6,27 +6,26 @@ import (
 	"chat-system/core/repo"
 	kafkarep "chat-system/core/repo/kafkaRep"
 	"chat-system/ws"
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/segmentio/kafka-go"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func getMessageWatcher(conf *config.Confing) (ws.MessageWatcher, error) {
+type Config struct {
+	MongoDB      *repo.MongoConf
+	KafkaReader  *kafkarep.ReaderConf
+	SpiceDbUrl   string `env:"AUTHZED_URL"`
+	SpiceDBToken string `env:"AUTHZED_TOKEN"`
+}
+
+func getMessageWatcher(conf *Config) (ws.MessageWatcher, error) {
 	const wType = "kafka"
 
 	switch wType {
 	case "mongo":
-		mongoOptions := &options.ClientOptions{}
-		mongoOptions.ApplyURI(fmt.Sprintf("mongodb://%s:%s@%s:%d", conf.MongoUser, conf.MongoPass, conf.MongoHost, conf.MongoPort))
-		mongoCli, err := mongo.Connect(context.TODO(), mongoOptions)
-		if err != nil {
-			return nil, fmt.Errorf("can't create mongodb client: %w", err)
-		}
+		mongoCli := repo.NewInsecureMongoCli(conf.MongoDB)
 
 		mongoRepo, err := repo.NewMongoRepo(mongoCli)
 		if err != nil {
@@ -36,7 +35,7 @@ func getMessageWatcher(conf *config.Confing) (ws.MessageWatcher, error) {
 
 	case "kafka":
 		kafkaReader := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:  []string{conf.KafkaHost},
+			Brokers:  []string{conf.KafkaReader.KafkaHost},
 			Topic:    "chat-messages",
 			MaxBytes: 2e6, // 2MB
 			GroupID:  "chat-messages-watcher",
@@ -49,7 +48,7 @@ func getMessageWatcher(conf *config.Confing) (ws.MessageWatcher, error) {
 	return nil, fmt.Errorf("watcher type %s not found", wType)
 }
 
-func prepare(conf *config.Confing) error {
+func prepare(conf *Config) error {
 	broker := ws.NewWSServer()
 	ws.RunServer(broker)
 
@@ -75,12 +74,12 @@ func prepare(conf *config.Confing) error {
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	conf, err := config.New()
-	if err != nil {
+	conf := &Config{}
+	if err := config.Parse(conf); err != nil {
 		panic(err)
 	}
 
-	err = prepare(conf)
+	err := prepare(conf)
 	if err != nil {
 		panic(err)
 	}

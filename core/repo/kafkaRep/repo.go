@@ -21,6 +21,28 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
+type WriterConf struct {
+	KafkaHost    string        `env:"KAFKA_HOST"`
+	MsgTopic     string        `env:"KAFKA_MSG_TOPIC" default:"chat-messages"`
+	BatchTimeout time.Duration `env:"KAFKA_BATCH_TIMEOUT" default:"50ms"`
+}
+
+func NewInsecureWriter(conf *WriterConf) *kafka.Writer {
+	kafkaWriter := &kafka.Writer{
+		Addr:                   kafka.TCP(conf.KafkaHost),
+		Topic:                  conf.MsgTopic,
+		AllowAutoTopicCreation: true,
+		// Balancer:               &kafka.LeastBytes{},
+		RequiredAcks: kafka.RequireOne,
+		BatchTimeout: conf.BatchTimeout,
+		Compression:  kafka.Snappy,
+
+		// Transport: kafka.DefaultTransport,
+	}
+
+	return kafkaWriter
+}
+
 type kafkaRepo struct {
 	writer *otelkafkakonsumer.Writer
 	coll   mgm.Collection
@@ -135,7 +157,6 @@ func (k kafkaRepo) SendMsgToTopic(ctx context.Context, sender messages.Sender, t
 	if err != nil {
 		slog.ErrorContext(ctx, "can not write the message to kafka", "kafkaTopic", k.writer.W.Topic, "err", err)
 	}
-	
 
 	return *mongoMesg.ToApiMessage(), err
 }

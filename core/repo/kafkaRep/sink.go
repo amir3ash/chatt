@@ -24,6 +24,32 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+type ReaderConf struct {
+	KafkaHost string        `env:"KAFKA_HOST"`
+	Topic     string        `env:"KAFKA_HOST" default:"chat-messages"`
+	MaxBytes  int           `env:"READER_MAX_BYTES" default:"2e6"` // 2MB
+	MaxWait   time.Duration `env:"READER_MAX_WAIT" default:"2s"`
+	GroupID   string        `env:"READER_GROUP_ID" default:"chat-messages-mongo-connect"`
+}
+
+func NewInsecureReader(conf *ReaderConf) *kafka.Reader {
+	kafkaConf := kafka.ReaderConfig{
+		Brokers:  []string{conf.KafkaHost},
+		Topic:    conf.Topic,
+		MaxBytes: conf.MaxBytes,
+		GroupID:  conf.GroupID,
+		MaxWait:  conf.MaxWait,
+		MinBytes: 1,
+	}
+	err := kafkaConf.Validate()
+	if err != nil {
+		panic(err)
+	}
+
+	kafkaReader := kafka.NewReader(kafkaConf)
+	return kafkaReader
+}
+
 type mongoAggr struct {
 	mgm.IDField `bson:",inline"`
 	Topic       string             `bson:"topicID"`
@@ -43,9 +69,9 @@ type MongoConnect struct {
 	coll     mgm.Collection
 	ctx      context.Context
 	cancel   context.CancelFunc
-	msgChan chan kafka.Message
-	mu      sync.Mutex
-	tracer  trace.Tracer
+	msgChan  chan kafka.Message
+	mu       sync.Mutex
+	tracer   trace.Tracer
 }
 
 func NewMongoConnect(ctx context.Context, mongoCli *mongo.Client, kafkaReader *kafka.Reader) *MongoConnect {
@@ -73,9 +99,9 @@ func NewMongoConnect(ctx context.Context, mongoCli *mongo.Client, kafkaReader *k
 		coll:     *coll,
 		ctx:      ctx,
 		cancel:   cancel,
-		msgChan: make(chan kafka.Message),
-		mu:      sync.Mutex{},
-		tracer:  otel.Tracer("golang-mongo-connect"),
+		msgChan:  make(chan kafka.Message),
+		mu:       sync.Mutex{},
+		tracer:   otel.Tracer("golang-mongo-connect"),
 	}
 
 	go c.run()
@@ -135,7 +161,7 @@ func (c *MongoConnect) run() {
 		msgList := make([]kafka.Message, 0)
 		timer := time.NewTimer(batchTimout)
 		defer timer.Stop()
-		
+
 		for {
 			timer.Reset(batchTimout)
 
