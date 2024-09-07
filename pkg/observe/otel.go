@@ -1,14 +1,17 @@
 package observe
 
 import (
+	"chat-system/version"
 	"context"
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
+	"go.opentelemetry.io/otel/log/global"
 
 	// "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
@@ -19,9 +22,33 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
+var instanceId string
+
+func init() {
+	instanceId = uuid.NewString()
+}
+
+func Options() *options {
+	return &options{
+		resource: resource.Default(),
+	}
+}
+
+type options struct {
+	err            error
+	resource       *resource.Resource
+	tracerProvider *trace.TracerProvider
+	meterProvider  *metric.MeterProvider
+	loggerProvider *log.LoggerProvider
+}
+
+func (o *options) handleErr(optionErr error) {
+	o.err = errors.Join(o.err, optionErr)
+}
+
 // setupOTelSDK bootstraps the OpenTelemetry pipeline globally.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, err error) {
+func SetupOTelSDK(ctx context.Context, opts *options) (shutdown func(context.Context) error, err error) {
 	var shutdownFuncs []func(context.Context) error
 
 	// shutdown calls cleanup functions registered via shutdownFuncs.
@@ -41,36 +68,34 @@ func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 		err = errors.Join(inErr, shutdown(ctx))
 	}
 
+	if opts.err != nil {
+		handleErr(err)
+	}
+
 	// Set up propagator.
 	prop := newPropagator()
 	otel.SetTextMapPropagator(prop)
 
 	// Set up trace provider.
-	tracerProvider, err := newTraceProvider()
-	if err != nil {
-		handleErr(err)
-		return
+	if opts.tracerProvider != nil {
+		tracerProvider := opts.tracerProvider
+		shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
+		otel.SetTracerProvider(tracerProvider)
 	}
-	shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
-	otel.SetTracerProvider(tracerProvider)
 
 	// Set up meter provider.
-	// meterProvider, err := newMeterProvider()
-	// if err != nil {
-	// 	handleErr(err)
-	// 	return
-	// }
-	// shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
-	// otel.SetMeterProvider(meterProvider)
+	if opts.meterProvider != nil {
+		meterProvider := opts.meterProvider
+		shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
+		otel.SetMeterProvider(meterProvider)
+	}
 
-	// // Set up logger provider.
-	// loggerProvider, err := newLoggerProvider()
-	// if err != nil {
-	// 	handleErr(err)
-	// 	return
-	// }
-	// shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
-	// global.SetLoggerProvider(loggerProvider)
+	// Set up logger provider.
+	if opts.loggerProvider != nil {
+		loggerProvider := opts.loggerProvider
+		shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
+		global.SetLoggerProvider(loggerProvider)
+	}
 
 	return
 }
@@ -83,20 +108,15 @@ func newPropagator() propagation.TextMapPropagator {
 	return propagation.TraceContext{}
 }
 
-func newTraceProvider() (*trace.TracerProvider, error) {
+func (opts *options) EnableTraceProvider() *options {
 	ctx := context.Background()
-	res := resource.NewWithAttributes(
-		semconv.SchemaURL,
-		semconv.ServiceName("chat-api"),
-	)
 
 	traceExporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint("jaeger-collector.default.svc.cluster.local:4318"),
-		otlptracehttp.WithInsecure(),
 		otlptracehttp.WithCompression(otlptracehttp.GzipCompression),
 	)
 	if err != nil {
-		return nil, err
+		opts.handleErr(err)
+		return opts
 	}
 
 	bsp := trace.NewBatchSpanProcessor(traceExporter, trace.WithBlocking())
@@ -104,33 +124,63 @@ func newTraceProvider() (*trace.TracerProvider, error) {
 	traceProvider := trace.NewTracerProvider(
 		trace.WithSampler(trace.AlwaysSample()),
 		trace.WithSpanProcessor(bsp),
-		trace.WithResource(res),
+		trace.WithResource(opts.resource),
 	)
-	return traceProvider, nil
+
+	opts.tracerProvider = traceProvider
+
+	return opts
 }
 
-func newMeterProvider() (*metric.MeterProvider, error) {
+func (opts *options) EnableMeterProvider() *options {
 	metricExporter, err := stdoutmetric.New()
 	if err != nil {
-		return nil, err
+		opts.handleErr(err)
+		return opts
 	}
 
 	meterProvider := metric.NewMeterProvider(
 		metric.WithReader(metric.NewPeriodicReader(metricExporter,
 			// Default is 1m. Set to 3s for demonstrative purposes.
 			metric.WithInterval(3*time.Second))),
+		metric.WithResource(opts.resource),
 	)
-	return meterProvider, nil
+
+	opts.meterProvider = meterProvider
+	return opts
 }
 
-func newLoggerProvider() (*log.LoggerProvider, error) {
+func (opts *options) EnableLoggerProvider() *options {
 	logExporter, err := stdoutlog.New()
 	if err != nil {
-		return nil, err
+		opts.handleErr(err)
+		return opts
 	}
 
 	loggerProvider := log.NewLoggerProvider(
 		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+		log.WithResource(opts.resource),
 	)
-	return loggerProvider, nil
+
+	opts.loggerProvider = loggerProvider
+	return opts
+}
+
+// see https://opentelemetry.io/docs/specs/semconv/resource/
+func (opts *options) WithService(serviceName, namespace string) *options {
+	res, err := resource.Merge(resource.Default(),
+		resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(serviceName),
+			semconv.ServiceVersion(version.Version),
+			semconv.ServiceNamespace(namespace),
+			semconv.ServiceInstanceID(instanceId),
+		),
+	)
+	if err != nil {
+		opts.handleErr(err)
+	}
+
+	opts.resource = res
+	return opts
 }

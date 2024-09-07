@@ -5,7 +5,9 @@ import (
 	"chat-system/config"
 	"chat-system/core/repo"
 	kafkarep "chat-system/core/repo/kafkaRep"
+	"chat-system/pkg/observe"
 	"chat-system/ws"
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -74,12 +76,22 @@ func prepare(conf *Config) error {
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
+	observeOpts := observe.Options().
+		WithService("ws-server", "chatting").
+		EnableTraceProvider()
+
+	otelShutdown, err := observe.SetupOTelSDK(context.TODO(), observeOpts)
+	if err != nil {
+		panic(fmt.Errorf("can't setup opentelementry: %w", err))
+	}
+	defer otelShutdown(context.Background())
+
 	conf := &Config{}
 	if err := config.Parse(conf); err != nil {
 		panic(err)
 	}
 
-	err := prepare(conf)
+	err = prepare(conf)
 	if err != nil {
 		panic(err)
 	}

@@ -16,8 +16,8 @@ import (
 )
 
 type Config struct {
-	MongoDB     *repo.MongoConf
-	KafkaWriter *kafkarep.WriterConf
+	MongoDB      *repo.MongoConf
+	KafkaWriter  *kafkarep.WriterConf
 	SpiceDbUrl   string `env:"AUTHZED_URL"`
 	SpiceDBToken string `env:"AUTHZED_TOKEN"`
 }
@@ -63,7 +63,11 @@ func main() {
 		panic(err)
 	}
 
-	otelShutdown, err := observe.SetupOTelSDK(context.TODO())
+	observeOpts := observe.Options().
+		WithService("api-server", "chatting").
+		EnableTraceProvider()
+
+	otelShutdown, err := observe.SetupOTelSDK(context.TODO(), observeOpts)
 	if err != nil {
 		panic(fmt.Errorf("can't setup opentelementry: %w", err))
 	}
