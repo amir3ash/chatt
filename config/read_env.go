@@ -29,6 +29,10 @@ var primitiveParsers = map[reflect.Kind]func(fv reflect.Value, in string) error{
 }
 
 func Parse[T any](conf *T) error {
+	if conf == nil {
+		return fmt.Errorf("conf is nil")
+	}
+
 	cType := reflect.TypeOf(conf).Elem()
 	if cType.Kind() != reflect.Struct {
 		return fmt.Errorf("conf type %v is not struct", cType)
@@ -46,6 +50,10 @@ func parse(cType reflect.Type, cVal reflect.Value) error {
 
 	for i := 0; i < cType.NumField(); i++ {
 		field := cType.Field(i)
+		
+		if !field.IsExported() {
+			continue
+		}
 
 		tag := field.Tag
 		varName, hasEnv := tag.Lookup(TagName)
