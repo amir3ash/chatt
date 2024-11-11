@@ -33,7 +33,7 @@ func (c nettyConnection) SendBytes(b []byte) {
 	}
 }
 
-type serv struct {
+type httpServer struct {
 	// chatSvc   api.MessageService
 	broker    *wsServer
 	websocket *nettyws.Websocket
@@ -41,13 +41,13 @@ type serv struct {
 	OnConnect func(nettyws.Conn)
 }
 
-func newServ(broker *wsServer) serv {
+func newHttpServer(broker *wsServer) httpServer {
 	wsh := nettyws.NewWebsocket(
 		nettyws.WithAsyncWrite(512, false),
 		// nettyws.WithBufferSize(2048, 2048),
 		nettyws.WithNoDelay(true),
 	)
-	s := serv{broker, wsh, make(chan *nettyConnection, 15), nil}
+	s := httpServer{broker, wsh, make(chan *nettyConnection, 15), nil}
 
 	s.setupWsHandler()
 	go s.connectingHandler()
@@ -60,9 +60,9 @@ func RunServer(broker *wsServer) {
 	go func() {
 		fmt.Println("listen on ws://:7100")
 
-		wsHandler := newServ(broker)
+		server := newHttpServer(broker)
 
-		handler := authz.NewHttpAuthMiddleware(wsHandler)
+		handler := authz.NewHttpAuthMiddleware(server)
 		http.Handle("/ws", handler)
 
 		if err := http.ListenAndServe(":7100", handler); err != nil {
@@ -71,8 +71,8 @@ func RunServer(broker *wsServer) {
 	}()
 }
 
-func (wsHandler serv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsHandler.websocket.UpgradeHTTP(w, r)
+func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	conn, err := s.websocket.UpgradeHTTP(w, r)
 	if err != nil {
 		if errors.Is(err, nettyws.ErrServerClosed) {
 			http.Error(w, "http: server shutdown", http.StatusNotAcceptable)
@@ -87,19 +87,19 @@ func (wsHandler serv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	nettyConn := &nettyConnection{conn, userId, "test-clientID", func(err error) {}}
 	conn.SetUserdata(nettyConn)
 
-	wsHandler.OnConnect(conn)
+	s.OnConnect(conn)
 }
 
-func (wsHandler serv) connectingHandler() {
-	for conn := range wsHandler.ch {
-		wsHandler.OnConnect(conn.conn)
+func (s httpServer) connectingHandler() {
+	for conn := range s.ch {
+		s.OnConnect(conn.conn)
 	}
 }
 
-func (wsHandler *serv) setupWsHandler() {
-	broker := wsHandler.broker
+func (s *httpServer) setupWsHandler() {
+	broker := s.broker
 
-	wsHandler.OnConnect = func(conn nettyws.Conn) {
+	s.OnConnect = func(conn nettyws.Conn) {
 		nettyConn, ok := conn.Userdata().(*nettyConnection)
 		if !ok {
 			slog.Error("cant get userdata in websocket.onOpen")
@@ -117,7 +117,7 @@ func (wsHandler *serv) setupWsHandler() {
 		broker.AddConn(nettyConn)
 	}
 
-	wsHandler.websocket.OnClose = func(conn nettyws.Conn, err error) {
+	s.websocket.OnClose = func(conn nettyws.Conn, err error) {
 		nettyConn, ok := conn.Userdata().(*nettyConnection)
 		if ok {
 			broker.RemoveConn(nettyConn)
