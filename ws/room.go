@@ -209,10 +209,11 @@ func (b *wsServer) unRegisterOnDisconnect(o disconnectSubscriber) {
 	b.disconnectSubs = findAndDelete(b.disconnectSubs, o)
 	b.mu.Unlock()
 }
-func (b *wsServer) AddConnByPersonID(c conn, id string) {
+func (b *wsServer) AddConn(c conn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	id := c.getUserId()
 	conns := b.onlineClients[id]
 
 	conns = append(conns, c)

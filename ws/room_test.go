@@ -45,7 +45,7 @@ func Test_SendMessageTo(t *testing.T) {
 
 	mockConn := &MockConnection{[]byte("not_called"), authorizedUser, sync.Mutex{}}
 
-	wsServer.AddConnByPersonID(mockConn, mockConn.userId)
+	wsServer.AddConn(mockConn)
 
 	wait := make(chan bool)
 

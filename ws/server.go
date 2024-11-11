@@ -109,7 +109,7 @@ func (wsHandler *serv) setupWsHandler() {
 			conn.Close()
 		}
 
-		broker.AddConnByPersonID(nettyConn, nettyConn.userId)
+		broker.AddConn(nettyConn)
 	}
 
 	wsHandler.websocket.OnClose = func(conn nettyws.Conn, err error) {
