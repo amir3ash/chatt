@@ -11,26 +11,20 @@ import (
 )
 
 type nettyConnection struct {
-	conn     nettyws.Conn
-	userId   string
-	clientId string
-	onErr    func(error)
+	conn  nettyws.Conn
+	onErr func(error)
 }
 
-func (c nettyConnection) UserId() string {
-	return c.userId
-}
-
-func (c nettyConnection) ClientId() string {
-	return c.clientId
-}
-
-func (c nettyConnection) SendBytes(b []byte) {
+func (c nettyConnection) Write(b []byte) error {
 	err := c.conn.Write(b)
 	if err != nil {
 		slog.Error("cant write to websocket", "err", err)
 		go c.onErr(err)
 	}
+	return nil
+}
+func (c *nettyConnection) onError(f func(error)) {
+	c.onErr = f
 }
 
 type httpServer struct {
@@ -84,8 +78,8 @@ func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	userId := authz.UserIdFromCtx(r.Context())
 
-	nettyConn := &nettyConnection{conn, userId, "test-clientID", func(err error) {}}
-	conn.SetUserdata(nettyConn)
+	nettyConn := &nettyConnection{conn, func(err error) {}}
+	conn.SetUserdata(Client{"test-clientID", userId, nettyConn})
 
 	s.OnConnect(conn)
 }
@@ -100,7 +94,7 @@ func (s *httpServer) setupWsHandler() {
 	broker := s.broker
 
 	s.OnConnect = func(conn nettyws.Conn) {
-		nettyConn, ok := conn.Userdata().(*nettyConnection)
+		client, ok := conn.Userdata().(Client)
 		if !ok {
 			slog.Error("cant get userdata in websocket.onOpen")
 			conn.WriteClose(1011, "Internal Error")
@@ -108,19 +102,20 @@ func (s *httpServer) setupWsHandler() {
 			return
 		}
 
-		nettyConn.onErr = func(_ error) {
-			broker.RemoveConn(nettyConn)
+		nettyConn := client.Conn().(nettyConnection)
+		nettyConn.onError(func(_ error) {
+			broker.RemoveConn(client)
 			conn.WriteClose(1001, "going away")
 			conn.Close()
-		}
+		})
 
-		broker.AddConn(nettyConn)
+		broker.AddConn(client)
 	}
 
 	s.websocket.OnClose = func(conn nettyws.Conn, err error) {
-		nettyConn, ok := conn.Userdata().(*nettyConnection)
+		client, ok := conn.Userdata().(Client)
 		if ok {
-			broker.RemoveConn(nettyConn)
+			broker.RemoveConn(client)
 		}
 		fmt.Println("OnClose: ", conn.RemoteAddr(), ", error: ", err)
 	}

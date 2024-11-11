@@ -8,35 +8,45 @@ import (
 	"time"
 )
 
-type MockConnection struct {
+type mockConn struct {
+	sync.Mutex
 	received []byte
+}
+
+func (m *mockConn) Write(b []byte) error {
+	m.Lock()
+	defer m.Unlock()
+
+	m.received = b
+	return nil
+}
+func (m *mockConn) getReceived() []byte {
+	m.Lock()
+	defer m.Unlock()
+	return m.received
+}
+
+type MockClient struct {
 	userId   string
 	clientId string
+	conn mockConn
 	sync.Mutex
 }
 
-func (m *MockConnection) UserId() string {
+func (m *MockClient) UserId() string {
 	m.Lock()
 	defer m.Unlock()
 
 	return m.userId
 }
-func (m *MockConnection) ClientId() string {
+func (m *MockClient) ClientId() string {
 	m.Lock()
 	defer m.Unlock()
 
 	return m.clientId
 }
-func (m *MockConnection) SendBytes(b []byte) {
-	m.Lock()
-	defer m.Unlock()
-
-	m.received = b
-}
-func (m *MockConnection) getReceived() []byte {
-	m.Lock()
-	defer m.Unlock()
-	return m.received
+func (m *MockClient) Conn() Conn {
+	return &m.conn
 }
 
 func Test_SendMessageTo(t *testing.T) {
@@ -50,9 +60,10 @@ func Test_SendMessageTo(t *testing.T) {
 	msg := &messages.Message{ID: "2323"}
 	expectedBytes, _ := json.Marshal(msg)
 
-	mockConn := &MockConnection{[]byte("not_called"), authorizedUser, "empty-clientID", sync.Mutex{}}
+	mockConn := &mockConn{sync.Mutex{}, []byte("not_called")}
+	client := Client{"empty-clientID", authorizedUser, mockConn}
 
-	wsServer.AddConn(mockConn)
+	wsServer.AddConn(client)
 
 	wait := make(chan bool)
 

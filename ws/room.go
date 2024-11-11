@@ -28,7 +28,7 @@ func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
 	go workerIns.run()
 	server := roomServer{b, authz, make(map[string]*room), sync.RWMutex{}}
 
-	b.OnConnect(func(c conn) {
+	b.OnConnect(func(c Client) {
 		serverTopics := make([]string, 0, len(server.rooms))
 		for roomId := range server.rooms {
 			serverTopics = append(serverTopics, roomId)
@@ -99,7 +99,7 @@ type room struct {
 	mu               sync.RWMutex
 }
 
-func newRoom(id string, connections []conn) *room {
+func newRoom(id string, connections []Client) *room {
 	slog.Debug("creating new room", slog.String("id", id))
 	persons := presence.NewMemService()
 	ctx := context.Background()
@@ -116,12 +116,12 @@ func (r *room) subscribeOnDestruct(f func(roomeId string)) {
 	r.destroyObservers = append(r.destroyObservers, f)
 }
 
-func (r *room) addConn(c conn) {
+func (r *room) addConn(c Client) {
 	slog.Debug("room.addConn called.", slog.String("userId", c.UserId()))
 	r.onlinePersons.Connect(context.Background(), c)
 }
 
-func (r *room) onDisconnect(c conn) { // called when client disconnected
+func (r *room) onDisconnect(c Client) { // called when client disconnected
 	slog.Debug("room.onDisconnect called.", slog.String("userId", c.UserId()))
 	r.onlinePersons.Disconnected(context.Background(), c)
 }
@@ -133,41 +133,43 @@ func (r *room) SendMessage(m *messages.Message) { // maybe message will be incon
 	clients, _ := r.onlinePersons.GetOnlineClients(context.Background())
 
 	for dev := range clients {
-		client, ok := dev.(conn)
+		client, ok := dev.(Client)
 		if !ok {
 			slog.Warn("connection is nil")
 			continue
 		}
 
 		workerIns.do(client.UserId(), func() {
-			client.SendBytes(bytes)
+			if err := client.Conn().Write(bytes); err != nil {
+				// never here
+				slog.Error("can not write to client's connection",
+					slog.String("userId", client.UserId()),
+					slog.String("clientId", client.ClientId()),
+					"err", err)
+			}
 		})
 	}
 }
 
-type conn interface {
-	UserId() string
-	ClientId() string
-	SendBytes(b []byte)
-}
+
 
 type disconnectSubscriber interface {
-	onDisconnect(c conn)
+	onDisconnect(c Client)
 }
 
 type wsServer struct {
 	onlineClients  *presence.MemService
-	connectSubs    []func(conn)
+	connectSubs    []func(Client)
 	disconnectSubs []disconnectSubscriber
 	mu             sync.RWMutex
 }
 
 func NewWSServer() *wsServer {
-	s := &wsServer{presence.NewMemService(), []func(conn){}, []disconnectSubscriber{}, sync.RWMutex{}}
+	s := &wsServer{presence.NewMemService(), []func(Client){}, []disconnectSubscriber{}, sync.RWMutex{}}
 	return s
 }
 
-func (b *wsServer) OnConnect(f func(conn)) {
+func (b *wsServer) OnConnect(f func(Client)) {
 	b.mu.Lock()
 	b.connectSubs = append(b.connectSubs, f)
 	b.mu.Unlock()
@@ -182,14 +184,14 @@ func (b *wsServer) unRegisterOnDisconnect(o disconnectSubscriber) {
 	b.disconnectSubs = findAndDelete(b.disconnectSubs, o)
 	b.mu.Unlock()
 }
-func (b *wsServer) AddConn(c conn) {
+func (b *wsServer) AddConn(c Client) {
 	b.onlineClients.Connect(context.Background(), c)
 
 	for _, function := range b.connectSubs {
 		function(c)
 	}
 }
-func (b *wsServer) RemoveConn(c conn) {
+func (b *wsServer) RemoveConn(c Client) {
 	b.onlineClients.Disconnected(context.Background(), c)
 
 	for _, s := range b.disconnectSubs {
@@ -197,13 +199,13 @@ func (b *wsServer) RemoveConn(c conn) {
 	}
 }
 
-func (b *wsServer) findConnectionsForUsers(userIds []string) (res []conn) {
+func (b *wsServer) findConnectionsForUsers(userIds []string) (res []Client) {
 	slog.Debug("findConnectionsForUsers", "connections", b.onlineClients, "userIds", userIds)
 
 	for _, u := range userIds {
 		if conns := b.onlineClients.GetClientsForUserId(u); len(conns) != 0 {
 			for _, c := range conns {
-				res = append(res, c.(conn))
+				res = append(res, c.(Client))
 			}
 		}
 	}
