@@ -14,13 +14,13 @@ type MockConnection struct {
 	sync.Mutex
 }
 
-func (m *MockConnection) getUserId() string {
+func (m *MockConnection) UserId() string {
 	m.Lock()
 	defer m.Unlock()
 
 	return m.userId
 }
-func (m *MockConnection) sendBytes(b []byte) {
+func (m *MockConnection) SendBytes(b []byte) {
 	m.Lock()
 	defer m.Unlock()
 

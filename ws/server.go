@@ -11,16 +11,21 @@ import (
 )
 
 type nettyConnection struct {
-	conn   nettyws.Conn
-	userId string
-	onErr  func(error)
+	conn     nettyws.Conn
+	userId   string
+	clientId string
+	onErr    func(error)
 }
 
-func (c nettyConnection) getUserId() string {
+func (c nettyConnection) UserId() string {
 	return c.userId
 }
 
-func (c nettyConnection) sendBytes(b []byte) {
+func (c nettyConnection) ClientId() string {
+	return c.clientId
+}
+
+func (c nettyConnection) SendBytes(b []byte) {
 	err := c.conn.Write(b)
 	if err != nil {
 		slog.Error("cant write to websocket", "err", err)
@@ -79,7 +84,7 @@ func (wsHandler serv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	userId := authz.UserIdFromCtx(r.Context())
 
-	nettyConn := &nettyConnection{conn, userId, func(err error) {}}
+	nettyConn := &nettyConnection{conn, userId, "test-clientID", func(err error) {}}
 	conn.SetUserdata(nettyConn)
 
 	wsHandler.OnConnect(conn)

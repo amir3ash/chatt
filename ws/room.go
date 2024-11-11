@@ -33,7 +33,7 @@ func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
 		}
 		slog.Debug("OnConnect in roomserver", "rooms", server.rooms)
 
-		topics, err := authz.TopicsWhichUserCanWatch(c.getUserId(), serverTopics)
+		topics, err := authz.TopicsWhichUserCanWatch(c.UserId(), serverTopics)
 		if err != nil {
 			slog.Error("can't get topics which the user can read", "err", err)
 			return
@@ -112,11 +112,11 @@ func (r *room) subscribeOnDestruct(f func(roomeId string)) {
 }
 
 func (r *room) addConn(c conn) {
-	slog.Debug("room.addConn called.", slog.String("userId", c.getUserId()))
+	slog.Debug("room.addConn called.", slog.String("userId", c.UserId()))
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	userId := c.getUserId()
+	userId := c.UserId()
 	connections, ok := r.onlinePersons.Load(userId)
 	if ok {
 		connections = append(connections.([]conn), c)
@@ -128,8 +128,8 @@ func (r *room) addConn(c conn) {
 }
 
 func (r *room) onDisconnect(c conn) { // called when client disconnected
-	slog.Debug("room.onDisconnect called.", slog.String("userId", c.getUserId()))
-	userId := c.getUserId()
+	slog.Debug("room.onDisconnect called.", slog.String("userId", c.UserId()))
+	userId := c.UserId()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -160,11 +160,11 @@ func (r *room) SendMessage(m *messages.Message) { // maybe message will be incon
 			if v == nil {
 				continue
 			}
-			workerIns.do(v.getUserId(), func() {
+			workerIns.do(v.UserId(), func() {
 				if v == nil {
 					return
 				}
-				v.sendBytes(bytes)
+				v.SendBytes(bytes)
 			})
 		}
 		return true
@@ -173,8 +173,8 @@ func (r *room) SendMessage(m *messages.Message) { // maybe message will be incon
 }
 
 type conn interface {
-	getUserId() string
-	sendBytes(b []byte)
+	UserId() string
+	SendBytes(b []byte)
 }
 
 type disconnectSubscriber interface {
@@ -213,7 +213,7 @@ func (b *wsServer) AddConn(c conn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	id := c.getUserId()
+	id := c.UserId()
 	conns := b.onlineClients[id]
 
 	conns = append(conns, c)
@@ -228,7 +228,7 @@ func (b *wsServer) RemoveConn(c conn) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 
-		userId := c.getUserId()
+		userId := c.UserId()
 		conns4person := b.onlineClients[userId]
 
 		conns4person = findAndDelete(conns4person, c)
