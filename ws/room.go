@@ -99,15 +99,15 @@ type room struct {
 	mu               sync.RWMutex
 }
 
-func newRoom(id string, users []userWithConns) *room {
-	slog.Debug("creating new room", slog.String("id", id), "users", users)
+func newRoom(id string, connections []conn) *room {
+	slog.Debug("creating new room", slog.String("id", id))
 	persons := presence.NewMemService()
 	ctx := context.Background()
-	for _, u := range users { // TODO: optimize it
-		for _, c := range u.connections {
-			persons.Connect(ctx, c)
-		}
+
+	for _, c := range connections { // TODO: optimize it
+		persons.Connect(ctx, c)
 	}
+
 	return &room{id, persons, make([]func(string), 0), sync.RWMutex{}}
 }
 
@@ -156,15 +156,14 @@ type disconnectSubscriber interface {
 }
 
 type wsServer struct {
-	onlineClients  map[string][]conn // connections for a userId
+	onlineClients  *presence.MemService
 	connectSubs    []func(conn)
 	disconnectSubs []disconnectSubscriber
 	mu             sync.RWMutex
 }
 
 func NewWSServer() *wsServer {
-	s := &wsServer{make(map[string][]conn), []func(conn){}, []disconnectSubscriber{}, sync.RWMutex{}}
-	// go s.distbuteMessages()
+	s := &wsServer{presence.NewMemService(), []func(conn){}, []disconnectSubscriber{}, sync.RWMutex{}}
 	return s
 }
 
@@ -184,53 +183,28 @@ func (b *wsServer) unRegisterOnDisconnect(o disconnectSubscriber) {
 	b.mu.Unlock()
 }
 func (b *wsServer) AddConn(c conn) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	id := c.UserId()
-	conns := b.onlineClients[id]
-
-	conns = append(conns, c)
-	b.onlineClients[id] = conns
+	b.onlineClients.Connect(context.Background(), c)
 
 	for _, function := range b.connectSubs {
 		function(c)
 	}
 }
 func (b *wsServer) RemoveConn(c conn) {
-	func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-
-		userId := c.UserId()
-		conns4person := b.onlineClients[userId]
-
-		conns4person = findAndDelete(conns4person, c)
-
-		if len(conns4person) == 0 {
-			delete(b.onlineClients, userId)
-		} else {
-			b.onlineClients[userId] = conns4person
-		}
-	}()
+	b.onlineClients.Disconnected(context.Background(), c)
 
 	for _, s := range b.disconnectSubs {
 		s.onDisconnect(c)
 	}
 }
 
-type userWithConns struct {
-	userId      string
-	connections []conn
-}
-
-func (b *wsServer) findConnectionsForUsers(userIds []string) (res []userWithConns) {
+func (b *wsServer) findConnectionsForUsers(userIds []string) (res []conn) {
 	slog.Debug("findConnectionsForUsers", "connections", b.onlineClients, "userIds", userIds)
+
 	for _, u := range userIds {
-		if conns := b.onlineClients[u]; conns != nil {
-			newConns := make([]conn, len(conns))
-			copy(newConns, conns)
-			res = append(res, userWithConns{u, newConns})
+		if conns := b.onlineClients.GetClientsForUserId(u); len(conns) != 0 {
+			for _, c := range conns {
+				res = append(res, c.(conn))
+			}
 		}
 	}
 	return

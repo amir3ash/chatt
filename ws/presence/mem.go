@@ -86,6 +86,14 @@ func (s *MemService) GetOnlineClients(_ context.Context) (iter.Seq[Device], erro
 	}, nil
 }
 
+func (s *MemService) GetClientsForUserId(user string) []Device {
+	v, ok := s.onlinePersons.Load(user)
+	if !ok {
+		return nil
+	}
+	return v.([]Device)
+}
+
 // Deletes item from slice then insert zero value at end (for GC).
 // Be careful, it reorders the slice
 func findAndDelete[T comparable](list []T, elem T) []T {
