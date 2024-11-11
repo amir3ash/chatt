@@ -11,6 +11,7 @@ import (
 type MockConnection struct {
 	received []byte
 	userId   string
+	clientId string
 	sync.Mutex
 }
 
@@ -19,6 +20,12 @@ func (m *MockConnection) UserId() string {
 	defer m.Unlock()
 
 	return m.userId
+}
+func (m *MockConnection) ClientId() string {
+	m.Lock()
+	defer m.Unlock()
+
+	return m.clientId
 }
 func (m *MockConnection) SendBytes(b []byte) {
 	m.Lock()
@@ -43,7 +50,7 @@ func Test_SendMessageTo(t *testing.T) {
 	msg := &messages.Message{ID: "2323"}
 	expectedBytes, _ := json.Marshal(msg)
 
-	mockConn := &MockConnection{[]byte("not_called"), authorizedUser, sync.Mutex{}}
+	mockConn := &MockConnection{[]byte("not_called"), authorizedUser, "empty-clientID", sync.Mutex{}}
 
 	wsServer.AddConn(mockConn)
 

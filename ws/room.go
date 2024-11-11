@@ -2,6 +2,8 @@ package ws
 
 import (
 	"chat-system/core/messages"
+	"chat-system/ws/presence"
+	"context"
 	"encoding/json"
 	"hash/fnv"
 	"log/slog"
@@ -92,16 +94,19 @@ func (r *roomServer) createRoom(topicId string) *room {
 
 type room struct {
 	ID               string
-	onlinePersons    *sync.Map // map<string, []conn>
+	onlinePersons    *presence.MemService
 	destroyObservers []func(roomId string)
 	mu               sync.RWMutex
 }
 
 func newRoom(id string, users []userWithConns) *room {
 	slog.Debug("creating new room", slog.String("id", id), "users", users)
-	persons := &sync.Map{}
-	for _, u := range users {
-		persons.Store(u.userId, u.connections)
+	persons := presence.NewMemService()
+	ctx := context.Background()
+	for _, u := range users { // TODO: optimize it
+		for _, c := range u.connections {
+			persons.Connect(ctx, c)
+		}
 	}
 	return &room{id, persons, make([]func(string), 0), sync.RWMutex{}}
 }
@@ -113,67 +118,36 @@ func (r *room) subscribeOnDestruct(f func(roomeId string)) {
 
 func (r *room) addConn(c conn) {
 	slog.Debug("room.addConn called.", slog.String("userId", c.UserId()))
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	userId := c.UserId()
-	connections, ok := r.onlinePersons.Load(userId)
-	if ok {
-		connections = append(connections.([]conn), c)
-	} else {
-		connections = []conn{c}
-	}
-
-	r.onlinePersons.Store(userId, connections)
+	r.onlinePersons.Connect(context.Background(), c)
 }
 
 func (r *room) onDisconnect(c conn) { // called when client disconnected
 	slog.Debug("room.onDisconnect called.", slog.String("userId", c.UserId()))
-	userId := c.UserId()
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	v, ok := r.onlinePersons.Load(userId)
-	if !ok {
-		return
-	}
-	connections := v.([]conn)
-
-	connections = findAndDelete(connections, c)
-
-	if len(connections) == 0 {
-		r.onlinePersons.Delete(userId)
-	} else {
-		r.onlinePersons.Store(userId, connections)
-	}
+	r.onlinePersons.Disconnected(context.Background(), c)
 }
 
 func (r *room) SendMessage(m *messages.Message) { // maybe message will be inconsistence with DB
 	slog.Debug("room.SendMessage called", slog.String("topicId", m.TopicID), "onlinepersions", r.onlinePersons)
 	bytes, _ := json.Marshal(m)
 
-	r.onlinePersons.Range(func(key, value any) bool {
-		connections := value.([]conn)
-		for i := range connections {
-			v := connections[i]
-			if v == nil {
-				continue
-			}
-			workerIns.do(v.UserId(), func() {
-				if v == nil {
-					return
-				}
-				v.SendBytes(bytes)
-			})
-		}
-		return true
-	})
+	clients, _ := r.onlinePersons.GetOnlineClients(context.Background())
 
+	for dev := range clients {
+		client, ok := dev.(conn)
+		if !ok {
+			slog.Warn("connection is nil")
+			continue
+		}
+
+		workerIns.do(client.UserId(), func() {
+			client.SendBytes(bytes)
+		})
+	}
 }
 
 type conn interface {
 	UserId() string
+	ClientId() string
 	SendBytes(b []byte)
 }
 
