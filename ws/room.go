@@ -5,7 +5,6 @@ import (
 	"chat-system/ws/presence"
 	"context"
 	"encoding/json"
-	"hash/fnv"
 	"log/slog"
 	"sync"
 )
@@ -47,6 +46,7 @@ func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
 	})
 	return &server
 }
+
 func (r *roomServer) getRoom(topicID string) *room {
 	var roomIns *room
 	r.RLock()
@@ -54,6 +54,7 @@ func (r *roomServer) getRoom(topicID string) *room {
 	r.RUnlock()
 	return roomIns
 }
+
 func (r *roomServer) SendMessageTo(topicId string, msg *messages.Message) {
 	room := r.getRoom(topicId)
 	if room == nil {
@@ -149,121 +150,4 @@ func (r *room) SendMessage(m *messages.Message) { // maybe message will be incon
 			}
 		})
 	}
-}
-
-
-
-type disconnectSubscriber interface {
-	onDisconnect(c Client)
-}
-
-type wsServer struct {
-	onlineClients  *presence.MemService
-	connectSubs    []func(Client)
-	disconnectSubs []disconnectSubscriber
-	mu             sync.RWMutex
-}
-
-func NewWSServer() *wsServer {
-	s := &wsServer{presence.NewMemService(), []func(Client){}, []disconnectSubscriber{}, sync.RWMutex{}}
-	return s
-}
-
-func (b *wsServer) OnConnect(f func(Client)) {
-	b.mu.Lock()
-	b.connectSubs = append(b.connectSubs, f)
-	b.mu.Unlock()
-}
-func (b *wsServer) registerOnDisconnect(o disconnectSubscriber) {
-	b.mu.Lock()
-	b.disconnectSubs = append(b.disconnectSubs, o)
-	b.mu.Unlock()
-}
-func (b *wsServer) unRegisterOnDisconnect(o disconnectSubscriber) {
-	b.mu.Lock()
-	b.disconnectSubs = findAndDelete(b.disconnectSubs, o)
-	b.mu.Unlock()
-}
-func (b *wsServer) AddConn(c Client) {
-	b.onlineClients.Connect(context.Background(), c)
-
-	for _, function := range b.connectSubs {
-		function(c)
-	}
-}
-func (b *wsServer) RemoveConn(c Client) {
-	b.onlineClients.Disconnected(context.Background(), c)
-
-	for _, s := range b.disconnectSubs {
-		s.onDisconnect(c)
-	}
-}
-
-func (b *wsServer) findConnectionsForUsers(userIds []string) (res []Client) {
-	slog.Debug("findConnectionsForUsers", "connections", b.onlineClients, "userIds", userIds)
-
-	for _, u := range userIds {
-		if conns := b.onlineClients.GetClientsForUserId(u); len(conns) != 0 {
-			for _, c := range conns {
-				res = append(res, c.(Client))
-			}
-		}
-	}
-	return
-}
-
-// Deletes item from slice then insert zero value at end (for GC).
-// Be careful, it reorders the slice
-func findAndDelete[T comparable](list []T, elem T) []T {
-	var zero T
-	lastIdx := len(list) - 1
-	for i := range list {
-		if list[i] == elem {
-			list[i] = list[lastIdx]
-			list[lastIdx] = zero
-			list = list[:lastIdx]
-			return list
-		}
-	}
-	return list
-}
-
-// -----------------
-
-type workerJob func()
-type shardedWorker struct {
-	num        uint32
-	workerJobs []chan workerJob
-}
-
-// Creates multiple job chans and goroutins to shard jobs by the hash of the string
-func newShardedWorker(num uint32) shardedWorker {
-	j := make([]chan workerJob, num)
-	for i := range j {
-		j[i] = make(chan workerJob, 1)
-	}
-
-	return shardedWorker{num: num, workerJobs: j}
-}
-
-func (w shardedWorker) do(id string, f func()) {
-	index := getHash(id) % w.num
-	w.workerJobs[index] <- f
-}
-
-func (w shardedWorker) run() {
-	for i := uint32(0); i < w.num; i++ {
-		go func(workerIdx uint32) {
-			jobs := w.workerJobs[workerIdx]
-			for job := range jobs {
-				job()
-			}
-		}(i)
-	}
-}
-
-func getHash(s string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(s))
-	return h.Sum32()
 }
