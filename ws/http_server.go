@@ -10,12 +10,12 @@ import (
 	nettyws "github.com/go-netty/go-netty-ws"
 )
 
-type nettyConnection struct {
-	conn  nettyws.Conn
+type errorHandledConn struct {
+	conn  Conn
 	onErr func(error)
 }
 
-func (c nettyConnection) Write(b []byte) error {
+func (c errorHandledConn) Write(b []byte) error {
 	err := c.conn.Write(b)
 	if err != nil {
 		slog.Error("cant write to websocket", "err", err)
@@ -23,7 +23,7 @@ func (c nettyConnection) Write(b []byte) error {
 	}
 	return nil
 }
-func (c *nettyConnection) onError(f func(error)) {
+func (c *errorHandledConn) onError(f func(error)) {
 	c.onErr = f
 }
 
@@ -31,7 +31,7 @@ type httpServer struct {
 	// chatSvc   api.MessageService
 	broker    *wsServer
 	websocket *nettyws.Websocket
-	ch        chan *nettyConnection
+	ch        chan *errorHandledConn
 	OnConnect func(nettyws.Conn)
 }
 
@@ -41,7 +41,7 @@ func newHttpServer(broker *wsServer) httpServer {
 		// nettyws.WithBufferSize(2048, 2048),
 		nettyws.WithNoDelay(true),
 	)
-	s := httpServer{broker, wsh, make(chan *nettyConnection, 15), nil}
+	s := httpServer{broker, wsh, make(chan *errorHandledConn, 15), nil}
 
 	s.setupWsHandler()
 	go s.connectingHandler()
@@ -78,7 +78,7 @@ func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	userId := authz.UserIdFromCtx(r.Context())
 
-	nettyConn := &nettyConnection{conn, func(err error) {}}
+	nettyConn := &errorHandledConn{conn, func(err error) {}}
 	conn.SetUserdata(Client{"test-clientID", userId, nettyConn})
 
 	s.OnConnect(conn)
@@ -86,7 +86,7 @@ func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s httpServer) connectingHandler() {
 	for conn := range s.ch {
-		s.OnConnect(conn.conn)
+		s.OnConnect(conn.conn.(nettyws.Conn))
 	}
 }
 
@@ -102,7 +102,7 @@ func (s *httpServer) setupWsHandler() {
 			return
 		}
 
-		nettyConn := client.Conn().(nettyConnection)
+		nettyConn := client.Conn().(errorHandledConn)
 		nettyConn.onError(func(_ error) {
 			broker.RemoveConn(client)
 			conn.WriteClose(1001, "going away")
