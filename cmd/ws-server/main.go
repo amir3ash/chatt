@@ -78,7 +78,8 @@ func main() {
 
 	observeOpts := observe.Options().
 		WithService("ws-server", "chatting").
-		EnableTraceProvider()
+		EnableTraceProvider().
+		EnableLoggerProvider()
 
 	otelShutdown, err := observe.SetupOTelSDK(context.TODO(), observeOpts)
 	if err != nil {

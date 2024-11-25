@@ -31,7 +31,8 @@ func main() {
 
 	observeOpts := observe.Options().
 		WithService("chat-mongo-kafka-connect", "chatting.streams").
-		EnableTraceProvider()
+		EnableTraceProvider().
+		EnableLoggerProvider()
 	otelShutdown, err := observe.SetupOTelSDK(context.TODO(), observeOpts)
 	if err != nil {
 		panic(fmt.Errorf("can't setup opentelementry: %w", err))

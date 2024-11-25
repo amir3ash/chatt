@@ -78,6 +78,7 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo v0.57.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.57.0
 	go.opentelemetry.io/otel v1.32.0
+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.8.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.32.0
 	go.opentelemetry.io/otel/sdk/metric v1.32.0
 	golang.org/x/crypto v0.29.0 // indirect

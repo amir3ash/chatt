@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/log/global"
 
@@ -151,7 +151,10 @@ func (opts *options) EnableMeterProvider() *options {
 }
 
 func (opts *options) EnableLoggerProvider() *options {
-	logExporter, err := stdoutlog.New()
+	logExporter, err := otlploghttp.New(
+		context.Background(),
+		otlploghttp.WithCompression(otlploghttp.GzipCompression),
+	)
 	if err != nil {
 		opts.handleErr(err)
 		return opts
