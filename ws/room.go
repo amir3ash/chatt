@@ -22,7 +22,7 @@ func init() {
 }
 
 type roomServer struct {
-	broker *wsServer
+	wsServer *wsServer
 	authz  whoCanReadTopic
 	rooms  map[string]*room
 	sync.RWMutex
@@ -81,14 +81,14 @@ func (r *roomServer) createRoom(topicId string) *room {
 		slog.Error("error in calling WhoCanWatchTopic", slog.String("topicId", topicId), "err", err)
 	}
 
-	userConnections := r.broker.findConnectionsForUsers(userIds)
+	userConnections := r.wsServer.findConnectionsForUsers(userIds)
 	slog.Debug("roomServer.createRoom", "topicId", topicId, "userConns", userConnections)
 	room = newRoom(topicId, userConnections)
 	r.rooms[topicId] = room
-	r.broker.registerOnDisconnect(room)
+	r.wsServer.registerOnDisconnect(room)
 
 	room.subscribeOnDestruct(func(roomId string) {
-		r.broker.unRegisterOnDisconnect(r.rooms[roomId])
+		r.wsServer.unRegisterOnDisconnect(r.rooms[roomId])
 		delete(r.rooms, roomId)
 	})
 

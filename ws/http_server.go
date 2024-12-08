@@ -29,7 +29,7 @@ func (c *errorHandledConn) onError(f func(error)) {
 
 type httpServer struct {
 	// chatSvc   api.MessageService
-	broker    *wsServer
+	wsServer    *wsServer
 	websocket *nettyws.Websocket
 	ch        chan *errorHandledConn
 	OnConnect func(nettyws.Conn)
@@ -91,7 +91,7 @@ func (s httpServer) connectingHandler() {
 }
 
 func (s *httpServer) setupWsHandler() {
-	broker := s.broker
+	wsServer := s.wsServer
 
 	s.OnConnect = func(conn nettyws.Conn) {
 		client, ok := conn.Userdata().(Client)
@@ -104,18 +104,18 @@ func (s *httpServer) setupWsHandler() {
 
 		nettyConn := client.Conn().(errorHandledConn)
 		nettyConn.onError(func(_ error) {
-			broker.RemoveConn(client)
+			wsServer.RemoveConn(client)
 			conn.WriteClose(1001, "going away")
 			conn.Close()
 		})
 
-		broker.AddConn(client)
+		wsServer.AddConn(client)
 	}
 
 	s.websocket.OnClose = func(conn nettyws.Conn, err error) {
 		client, ok := conn.Userdata().(Client)
 		if ok {
-			broker.RemoveConn(client)
+			wsServer.RemoveConn(client)
 		}
 		fmt.Println("OnClose: ", conn.RemoteAddr(), ", error: ", err)
 	}
