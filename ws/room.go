@@ -132,8 +132,7 @@ func (r *room) removeClient(c Client) {
 }
 
 func (r *room) onDisconnect(c Client) { // called when client disconnected
-	slog.Debug("room.onDisconnect called.", slog.String("userId", c.UserId()))
-	r.onlinePersons.Disconnected(context.Background(), c)
+	r.removeClient(c)
 }
 
 func (r *room) SendMessage(m *messages.Message) { // maybe message will be inconsistence with DB

@@ -1,35 +1,45 @@
 package ws
 
 import (
+	"bytes"
 	"chat-system/core/messages"
+	"chat-system/ws/presence"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"sync"
 	"testing"
-	"time"
 )
 
 type mockConn struct {
 	sync.Mutex
-	received []byte
+	ch  chan []byte
+	err error
 }
 
 func (m *mockConn) Write(b []byte) error {
+	m._getCh() <- b
+	return m.err
+}
+func (m *mockConn) getReceived() []byte {
+	b := <-m._getCh()
+	return b
+}
+
+func (m *mockConn) _getCh() chan []byte {
 	m.Lock()
 	defer m.Unlock()
 
-	m.received = b
-	return nil
-}
-func (m *mockConn) getReceived() []byte {
-	m.Lock()
-	defer m.Unlock()
-	return m.received
+	if m.ch == nil {
+		m.ch = make(chan []byte, 1)
+	}
+	return m.ch
 }
 
 type MockClient struct {
 	userId   string
 	clientId string
-	conn mockConn
+	conn     mockConn
 	sync.Mutex
 }
 
@@ -49,32 +59,71 @@ func (m *MockClient) Conn() Conn {
 	return &m.conn
 }
 
-func Test_SendMessageTo(t *testing.T) {
+func roomContainsClient(r *room, cli Client) bool {
+	return slices.ContainsFunc(
+		r.onlinePersons.GetClientsForUserId("userid"),
+		func(dev presence.Device) bool {
+			return dev.ClientId() == cli.clientId && dev.UserId() == cli.UserId()
+		})
+}
 
-	wsServer := NewWSServer()
-	mockAuthz := NewMockTestAuthz()
-	authorizedUser := mockAuthz.topics["t_5"][0]
+func Test_addClient(t *testing.T) {
+	room := newRoom("room_id", []Client{})
+	cli := Client{"cli", "userid", &mockConn{}}
 
-	roomServer := NewRoomServer(wsServer, mockAuthz)
+	room.addClient(cli)
 
-	msg := &messages.Message{ID: "2323"}
-	expectedBytes, _ := json.Marshal(msg)
-
-	mockConn := &mockConn{sync.Mutex{}, []byte("not_called")}
-	client := Client{"empty-clientID", authorizedUser, mockConn}
-
-	wsServer.AddConn(client)
-
-	wait := make(chan bool)
-
-	go func() {
-		roomServer.SendMessageTo("t_5", msg)
-		time.Sleep(20 * time.Millisecond)
-		wait <- false
-	}()
-
-	<-wait
-	if string(mockConn.getReceived()) != string(expectedBytes) {
-		t.Errorf("message bytes not equal, got %s, expected %s", mockConn.received, expectedBytes)
+	if !roomContainsClient(room, cli) {
+		t.Errorf("the room should contains the client")
 	}
+}
+
+func Test_removeClient(t *testing.T) {
+	cli := Client{"cli", "userid", &mockConn{}}
+	room := newRoom("room_id", []Client{cli})
+
+	if !roomContainsClient(room, cli) {
+		t.Error("it should initialized with clients")
+		return
+	}
+
+	room.removeClient(cli)
+
+	if roomContainsClient(room, cli) {
+		t.Error("room should remove the client")
+	}
+}
+
+func Test_removeNoneExistanceClient(t *testing.T) {
+	// it should not panic when the client not exists
+
+	cli := Client{"cli", "userid", &mockConn{}}
+	room := newRoom("room_id", []Client{})
+
+	room.removeClient(cli)
+}
+
+func Test_SendMessage_writingToConn(t *testing.T) {
+	conn := mockConn{}
+	cli := Client{"cli", "userid", &conn}
+	room := newRoom("room_id", []Client{cli})
+	msg := messages.Message{ID: "msgId"}
+
+	room.SendMessage(&msg)
+
+	expected, _ := json.Marshal(msg)
+	gotBytes := conn.getReceived()
+
+	if !bytes.Equal(expected, gotBytes) {
+		t.Errorf("it should send serialized message, got %s, expected %s", gotBytes, expected)
+	}
+}
+
+func TestSendMessageWithError(t *testing.T) {
+	conn := mockConn{err: fmt.Errorf("mock error")}
+	cli := Client{"cli", "userid", &conn}
+	room := newRoom("room_id", []Client{cli})
+	msg := messages.Message{ID: "msgId"}
+
+	room.SendMessage(&msg)
 }
