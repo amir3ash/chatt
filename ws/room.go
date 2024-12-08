@@ -9,9 +9,16 @@ import (
 	"sync"
 )
 
+var workerIns shardedWorker
+
 type whoCanReadTopic interface {
 	WhoCanWatchTopic(topicId string) ([]string, error)
 	TopicsWhichUserCanWatch(userId string, topics []string) (topicIds []string, err error)
+}
+
+func init() {
+	workerIns = newShardedWorker(16)
+	go workerIns.run()
 }
 
 type roomServer struct {
@@ -21,10 +28,7 @@ type roomServer struct {
 	sync.RWMutex
 }
 
-var workerIns = newShardedWorker(16)
-
 func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
-	go workerIns.run()
 	server := roomServer{b, authz, make(map[string]*room), sync.RWMutex{}}
 
 	b.OnConnect(func(c Client) {
@@ -41,7 +45,7 @@ func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
 		}
 
 		for _, topicId := range topics {
-			server.rooms[topicId].addConn(c)
+			server.rooms[topicId].addClient(c)
 		}
 	})
 	return &server
@@ -117,9 +121,14 @@ func (r *room) subscribeOnDestruct(f func(roomeId string)) {
 	r.destroyObservers = append(r.destroyObservers, f)
 }
 
-func (r *room) addConn(c Client) {
+func (r *room) addClient(c Client) {
 	slog.Debug("room.addConn called.", slog.String("userId", c.UserId()))
 	r.onlinePersons.Connect(context.Background(), c)
+}
+
+func (r *room) removeClient(c Client) {
+	slog.Debug("room.removeClient called.", slog.String("clientId", c.ClientId()))
+	r.onlinePersons.Disconnected(context.Background(), c)
 }
 
 func (r *room) onDisconnect(c Client) { // called when client disconnected
