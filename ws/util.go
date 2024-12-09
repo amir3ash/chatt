@@ -1,6 +1,20 @@
 package ws
 
-import "hash/fnv"
+import (
+	"chat-system/authz"
+	"hash/fnv"
+
+)
+
+func Run(watcher MessageWatcher, authz *authz.Authoriz){
+	wsServer := NewWSServer()
+
+	RunServer(wsServer)
+
+	roomServer := NewRoomServer(wsServer, NewWSAuthorizer(authz))
+
+	ReadChangeStream(watcher, roomServer)
+}
 
 // Deletes item from slice then insert zero value at end (for GC).
 // Be careful, it reorders the slice

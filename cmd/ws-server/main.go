@@ -38,8 +38,9 @@ func getMessageWatcher(conf *Config) (ws.MessageWatcher, error) {
 	case "kafka":
 		kafkaReader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers:  []string{conf.KafkaReader.KafkaHost},
-			Topic:    "chat-messages",
-			MaxBytes: 2e6, // 2MB
+			Topic:    conf.KafkaReader.Topic,
+			MaxBytes: conf.KafkaReader.MaxBytes,
+			MaxWait:  conf.KafkaReader.MaxWait,
 			GroupID:  "chat-messages-watcher",
 		})
 		watcher := kafkarep.NewMessageWatcher(kafkaReader)
@@ -51,25 +52,18 @@ func getMessageWatcher(conf *Config) (ws.MessageWatcher, error) {
 }
 
 func prepare(conf *Config) error {
-	broker := ws.NewWSServer()
-	ws.RunServer(broker)
-
 	authzed, err := authz.NewInsecureAuthZedCli(authz.Conf{BearerToken: conf.SpiceDBToken, ApiUrl: conf.SpiceDbUrl})
 	if err != nil {
 		return fmt.Errorf("can't create authzed client: %w", err)
 	}
 
 	authoriz := authz.NewAuthoriz(authzed)
-
-	roomServer := ws.NewRoomServer(broker, ws.NewWSAuthorizer(authoriz))
-
 	msgWatcher, err := getMessageWatcher(conf)
 	if err != nil {
 		return err
 	}
 
-	ws.ReadChangeStream(msgWatcher, roomServer)
-
+	ws.Run(msgWatcher, authoriz)
 	return nil
 }
 
