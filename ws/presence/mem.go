@@ -17,11 +17,12 @@ type Device interface {
 
 type MemService struct {
 	onlinePersons *sync.Map // map<string, []Device>
-	mu            sync.Mutex
+	mu            sync.RWMutex
+	len           int
 }
 
 func NewMemService() *MemService {
-	return &MemService{&sync.Map{}, sync.Mutex{}}
+	return &MemService{&sync.Map{}, sync.RWMutex{}, 0}
 }
 
 // appends the device and returns nil.
@@ -39,6 +40,8 @@ func (s *MemService) Connect(ctx context.Context, dev Device) error {
 
 	s.onlinePersons.Store(userId, connections)
 
+	s.len++
+
 	return nil
 }
 
@@ -55,13 +58,18 @@ func (s *MemService) Disconnected(_ context.Context, dev Device) error {
 	}
 	connections := v.([]Device)
 
-	connections = findAndDelete(connections, dev)
+	connections, found := findAndDelete(connections, dev)
+	if !found {
+		return nil
+	}
 
 	if len(connections) == 0 {
 		s.onlinePersons.Delete(userId)
 	} else {
 		s.onlinePersons.Store(userId, connections)
 	}
+
+	s.len--
 
 	return nil
 }
@@ -94,9 +102,24 @@ func (s *MemService) GetClientsForUserId(user string) []Device {
 	return v.([]Device)
 }
 
+func (s *MemService) IsEmpty() bool {
+	s.mu.RLock()
+	empty := s.len == 0
+	s.mu.RUnlock()
+	return empty
+}
+
+func (s *MemService) GetDevicesForUsers(userIds ...string) (res []Device) {
+	for _, u := range userIds {
+		clients := s.GetClientsForUserId(u)
+		res = append(res, clients...)
+	}
+	return
+}
+
 // Deletes item from slice then insert zero value at end (for GC).
 // Be careful, it reorders the slice
-func findAndDelete[T comparable](list []T, elem T) []T {
+func findAndDelete[T comparable](list []T, elem T) (res []T, deleted bool) {
 	var zero T
 	lastIdx := len(list) - 1
 	for i := range list {
@@ -104,8 +127,8 @@ func findAndDelete[T comparable](list []T, elem T) []T {
 			list[i] = list[lastIdx]
 			list[lastIdx] = zero
 			list = list[:lastIdx]
-			return list
+			return list, true
 		}
 	}
-	return list
+	return list, false
 }

@@ -1,12 +1,12 @@
 package presence
 
-import "fmt"
-
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -162,4 +162,107 @@ func TestMemService_GetOnlineClients(t *testing.T) {
 			t.Errorf("all devices are not equal, expect %v, got %v", devices, gotSlice)
 		}
 	})
+}
+
+func TestMemService_GetDevicesForUsers(t *testing.T) {
+	tests := []struct {
+		name            string
+		connectedDevs   []Device
+		usersArg        []string
+		expectedClients []string
+	}{
+		{"empty", nil, nil, nil},
+		{"all devs", []Device{mockDevice{"u1", "cli_11"}, mockDevice{"u2", "cli_22"}},
+			[]string{"u1", "u2"}, []string{"cli_11", "cli_22"}},
+		{"all devs", []Device{mockDevice{"u1", "cli_11"}, mockDevice{"u1", "cli_12"}, mockDevice{"u2", "cli_22"}},
+			[]string{"u1"}, []string{"cli_11", "cli_12"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := NewMemService()
+
+			for _, dev := range tt.connectedDevs {
+				s.Connect(ctx, dev)
+			}
+
+			devices := s.GetDevicesForUsers(tt.usersArg...)
+
+			for _, dev := range devices {
+				if !slices.Contains(tt.expectedClients, dev.ClientId()) {
+					t.Errorf("clientId not exists in users' devices, got: %v, shouldContainsClient: %s, users: %v",
+						devices, dev.ClientId(), tt.usersArg)
+				}
+			}
+		})
+	}
+}
+
+func TestMemService_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name          string
+		connectedDevs int
+		expected      bool
+	}{
+		{"empty", 0, true},
+		{"low num _ not empty", 10, false},
+		{"low num _ empty", 10, true},
+		{"med num _ empty", 150, true},
+	}
+
+	for _, tt := range tests {
+		if tt.expected == false {
+			t.Run(tt.name, func(t *testing.T) {
+				s := NewMemService()
+				wg := sync.WaitGroup{}
+				wg.Add(tt.connectedDevs)
+
+				for range tt.connectedDevs {
+					go func() {
+						if err := s.Connect(context.Background(), mockDevice{}); err != nil {
+							t.Error("can not add device to memservice")
+						}
+						wg.Done()
+					}()
+				}
+				wg.Wait()
+
+				if s.len != tt.connectedDevs {
+					t.Errorf("memService.len is %d, expected: %d", s.len, tt.connectedDevs)
+				}
+			})
+		}
+
+		if tt.expected == true {
+			t.Run(tt.name, func(t *testing.T) {
+				s := NewMemService()
+				wg := sync.WaitGroup{}
+				wg.Add(tt.connectedDevs)
+
+				for i := range tt.connectedDevs {
+					go func(i int) {
+						userId := fmt.Sprint(i)
+						if err := s.Connect(context.Background(), mockDevice{userId: userId}); err != nil {
+							t.Error("can not add device to memservice")
+						}
+
+						if err := s.Disconnected(context.Background(), mockDevice{userId: userId}); err != nil {
+							t.Error("can not remove device from memservice")
+						}
+						wg.Done()
+					}(i)
+				}
+				wg.Wait()
+
+				if s.len != 0 {
+					t.Errorf("memService.len is %d, expected: %d", s.len, tt.connectedDevs)
+				}
+
+				if s.IsEmpty() != tt.expected {
+					t.Errorf("memService.IsEmpty is %v, expected: %v", s.IsEmpty(), tt.expected)
+				}
+			})
+		}
+	}
 }
