@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sync"
 )
 
@@ -16,46 +17,121 @@ type whoCanReadTopic interface {
 	TopicsWhichUserCanWatch(userId string, topics []string) (topicIds []string, err error)
 }
 
+type devicesGetter interface {
+	GetDevicesForUsers(userIds ...string) []presence.Device
+}
+
 func init() {
 	workerIns = newShardedWorker(16)
 	go workerIns.run()
 }
 
 type roomServer struct {
-	wsServer *wsServer
-	authz  whoCanReadTopic
-	rooms  map[string]*room
+	onlinePersons devicesGetter
+	authz         whoCanReadTopic
+	rooms         map[string]*room
+	clientsRooms  map[string][]string // clientId -> []roomId. rooms which the user connected to.
+	clientsMutex  sync.RWMutex
 	sync.RWMutex
 }
 
-func NewRoomServer(b *wsServer, authz whoCanReadTopic) *roomServer {
-	server := roomServer{b, authz, make(map[string]*room), sync.RWMutex{}}
-
-	b.OnConnect(func(c Client) {
-		serverTopics := make([]string, 0, len(server.rooms))
-		for roomId := range server.rooms {
-			serverTopics = append(serverTopics, roomId)
-		}
-		slog.Debug("OnConnect in roomserver", "rooms", server.rooms)
-
-		topics, err := authz.TopicsWhichUserCanWatch(c.UserId(), serverTopics)
-		if err != nil {
-			slog.Error("can't get topics which the user can read", "err", err)
-			return
-		}
-
-		for _, topicId := range topics {
-			server.rooms[topicId].addClient(c)
-		}
-	})
+func NewRoomServer(b devicesGetter, authz whoCanReadTopic) *roomServer {
+	server := roomServer{
+		b, authz, make(map[string]*room), make(map[string][]string),
+		sync.RWMutex{}, sync.RWMutex{},
+	}
 	return &server
 }
 
+// Adds client to room and remembers rooms which the client connected to.
+func (r *roomServer) joinClientToRoom(c Client, room *room) {
+	r.clientsMutex.Lock()
+	defer r.clientsMutex.Unlock()
+
+	rooms, ok := r.clientsRooms[c.ClientId()]
+	if ok {
+		rooms = append(rooms, room.ID)
+	} else {
+		rooms = []string{room.ID}
+	}
+
+	r.clientsRooms[c.ClientId()] = rooms
+
+	room.addClient(c)
+}
+
+// Removes client from room and remove the room from user's websocket rooms.
+func (r *roomServer) leaveClientFromRoom(c Client, room *room) {
+	r.clientsMutex.Lock()
+	defer r.clientsMutex.Unlock()
+
+	rooms, ok := r.clientsRooms[c.ClientId()]
+	if !ok {
+		return
+	}
+
+	rooms = findAndDelete(rooms, room.ID)
+
+	if len(rooms) == 0 {
+		delete(r.clientsRooms, c.ClientId())
+	} else {
+		r.clientsRooms[c.ClientId()] = rooms
+	}
+
+	room.removeClient(c)
+}
+
+func (r *roomServer) onClientConnected(c Client) {
+	serverTopics := make([]string, 0, len(r.rooms))
+	for roomId := range r.rooms {
+		serverTopics = append(serverTopics, roomId)
+	}
+	slog.Debug("OnConnect in roomserver", "rooms", r.rooms)
+
+	topics, err := r.authz.TopicsWhichUserCanWatch(c.UserId(), serverTopics)
+	if err != nil {
+		slog.Error("can't get topics which the user can read", "err", err)
+		return
+	}
+
+	for _, topicId := range topics {
+		room := r.rooms[topicId]
+		r.joinClientToRoom(c, room)
+	}
+}
+
+func (r *roomServer) onClientDisconnected(c Client) {
+	r.clientsMutex.RLock()
+	rooms := slices.Clone(r.clientsRooms[c.ClientId()])
+	r.clientsMutex.RUnlock()
+
+	r.Lock()
+	defer r.Unlock()
+
+	for _, roomId := range rooms {
+		room, ok := r.rooms[roomId]
+		if !ok {
+			slog.Warn("client's rooms is not synchronized with rooms",
+				slog.String("clientId", c.ClientId()), slog.String("roomId", roomId))	
+			continue
+		}
+
+		r.leaveClientFromRoom(c, room)
+
+		if room.IsEmpty() {
+			delete(r.rooms, roomId)
+		}
+	}
+}
+
 func (r *roomServer) getRoom(topicID string) *room {
-	var roomIns *room
 	r.RLock()
-	roomIns = r.rooms[topicID]
+	roomIns, found := r.rooms[topicID]
 	r.RUnlock()
+
+	if !found {
+		roomIns = r.createRoom(topicID)
+	}
 	return roomIns
 }
 
@@ -71,6 +147,7 @@ func (r *roomServer) SendMessageTo(topicId string, msg *messages.Message) {
 func (r *roomServer) createRoom(topicId string) *room {
 	r.Lock()
 	defer r.Unlock()
+
 	room, ok := r.rooms[topicId]
 	if ok {
 		return room
@@ -81,18 +158,23 @@ func (r *roomServer) createRoom(topicId string) *room {
 		slog.Error("error in calling WhoCanWatchTopic", slog.String("topicId", topicId), "err", err)
 	}
 
-	userConnections := r.wsServer.findConnectionsForUsers(userIds)
+	userConnections := r.onlinePersons.GetDevicesForUsers(userIds...)
 	slog.Debug("roomServer.createRoom", "topicId", topicId, "userConns", userConnections)
-	room = newRoom(topicId, userConnections)
-	r.rooms[topicId] = room
-	r.wsServer.registerOnDisconnect(room)
 
-	room.subscribeOnDestruct(func(roomId string) {
-		r.wsServer.unRegisterOnDisconnect(r.rooms[roomId])
-		delete(r.rooms, roomId)
-	})
+	room = newRoom(topicId, devicesToClients(userConnections))
+	r.rooms[topicId] = room
 
 	return room
+}
+
+var _ presence.Device = Client{}
+
+func devicesToClients(devs []presence.Device) []Client {
+	res := make([]Client, 0, len(devs))
+	for i := range devs {
+		res = append(res, devs[i].(Client))
+	}
+	return res
 }
 
 // --------------
@@ -133,6 +215,10 @@ func (r *room) removeClient(c Client) {
 
 func (r *room) onDisconnect(c Client) { // called when client disconnected
 	r.removeClient(c)
+}
+
+func (r *room) IsEmpty() bool {
+	return r.onlinePersons.IsEmpty()
 }
 
 func (r *room) SendMessage(m *messages.Message) { // maybe message will be inconsistence with DB
