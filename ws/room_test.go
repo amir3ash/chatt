@@ -61,7 +61,7 @@ func (m *MockClient) Conn() Conn {
 
 func roomContainsClient(r *room, cli Client) bool {
 	return slices.ContainsFunc(
-		r.onlinePersons.GetClientsForUserId("userid"),
+		r.onlinePersons.GetClientsForUserId(cli.UserId()),
 		func(dev presence.Device) bool {
 			return dev.ClientId() == cli.clientId && dev.UserId() == cli.UserId()
 		})
