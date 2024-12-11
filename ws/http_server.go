@@ -2,6 +2,8 @@ package ws
 
 import (
 	"chat-system/authz"
+	"chat-system/ws/presence"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -28,20 +30,20 @@ func (c *errorHandledConn) onError(f func(error)) {
 }
 
 type httpServer struct {
-	// chatSvc   api.MessageService
-	wsServer    *wsServer
-	websocket *nettyws.Websocket
-	ch        chan *errorHandledConn
-	OnConnect func(nettyws.Conn)
+	onlineClients *presence.MemService
+	dispatcher    *roomDispatcher
+	websocket     *nettyws.Websocket
+	ch            chan *errorHandledConn
+	OnConnect     func(nettyws.Conn)
 }
 
-func newHttpServer(broker *wsServer) httpServer {
+func newHttpServer(presence *presence.MemService, dispatcher *roomDispatcher) httpServer {
 	wsh := nettyws.NewWebsocket(
 		nettyws.WithAsyncWrite(512, false),
 		// nettyws.WithBufferSize(2048, 2048),
 		nettyws.WithNoDelay(true),
 	)
-	s := httpServer{broker, wsh, make(chan *errorHandledConn, 15), nil}
+	s := httpServer{presence, dispatcher, wsh, make(chan *errorHandledConn, 15), nil}
 
 	s.setupWsHandler()
 	go s.connectingHandler()
@@ -49,14 +51,12 @@ func newHttpServer(broker *wsServer) httpServer {
 	return s
 }
 
-func RunServer(broker *wsServer) {
+func (s httpServer) RunServer() {
 	// TODO add allowed origins to prevent CSRF
 	go func() {
 		fmt.Println("listen on ws://:7100")
 
-		server := newHttpServer(broker)
-
-		handler := authz.NewHttpAuthMiddleware(server)
+		handler := authz.NewHttpAuthMiddleware(s)
 		http.Handle("/ws", handler)
 
 		if err := http.ListenAndServe(":7100", handler); err != nil {
@@ -91,8 +91,6 @@ func (s httpServer) connectingHandler() {
 }
 
 func (s *httpServer) setupWsHandler() {
-	wsServer := s.wsServer
-
 	s.OnConnect = func(conn nettyws.Conn) {
 		client, ok := conn.Userdata().(Client)
 		if !ok {
@@ -104,19 +102,25 @@ func (s *httpServer) setupWsHandler() {
 
 		nettyConn := client.Conn().(errorHandledConn)
 		nettyConn.onError(func(_ error) {
-			wsServer.RemoveConn(client)
+			s.onlineClients.Disconnected(context.TODO(), client)
 			conn.WriteClose(1001, "going away")
 			conn.Close()
+			s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
 		})
 
-		wsServer.AddConn(client)
+		s.onlineClients.Connect(context.TODO(), client)
+		s.dispatcher.dispatch(clientEvent{clientConnected, client})
 	}
 
 	s.websocket.OnClose = func(conn nettyws.Conn, err error) {
 		client, ok := conn.Userdata().(Client)
 		if ok {
-			wsServer.RemoveConn(client)
+			s.onlineClients.Disconnected(context.TODO(), client)
+			s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
+		} else {
+			slog.Warn("can not cast connection's userdata to Client sturct", "userData", conn.Userdata())
 		}
-		fmt.Println("OnClose: ", conn.RemoteAddr(), ", error: ", err)
+
+		slog.Debug("client closed the connection", "remoteAddr", conn.RemoteAddr(), "userId", client.UserId(), "err", err)
 	}
 }
