@@ -2,16 +2,27 @@ package ws
 
 import (
 	"chat-system/authz"
+	"chat-system/ws/presence"
 	"hash/fnv"
-
 )
 
-func Run(watcher MessageWatcher, authz *authz.Authoriz){
-	wsServer := NewWSServer()
+func Run(watcher MessageWatcher, authz *authz.Authoriz) {
+	onlineUsersPresence := presence.NewMemService()
 
-	RunServer(wsServer)
+	roomServer := NewRoomServer(onlineUsersPresence, NewWSAuthorizer(authz))
 
-	roomServer := NewRoomServer(wsServer, NewWSAuthorizer(authz))
+	dispatcher := NewRoomDispatcher()
+
+	dispatcher.SubscribeOnClientEvents(func(e clientEvent) {
+		if e.EventType() == clientConnected {
+			roomServer.onClientConnected(e.client)
+		} else {
+			roomServer.onClientDisconnected(e.client)
+		}
+	})
+
+	httpServer := newHttpServer(onlineUsersPresence, dispatcher)
+	httpServer.RunServer()
 
 	ReadChangeStream(watcher, roomServer)
 }
