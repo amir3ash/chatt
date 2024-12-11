@@ -198,11 +198,6 @@ func newRoom(id string, connections []Client) *room {
 	return &room{id, persons, make([]func(string), 0), sync.RWMutex{}}
 }
 
-func (r *room) subscribeOnDestruct(f func(roomeId string)) {
-	slog.Debug("room.onDestruct called", slog.String("roomId", r.ID))
-	r.destroyObservers = append(r.destroyObservers, f)
-}
-
 func (r *room) addClient(c Client) {
 	slog.Debug("room.addConn called.", slog.String("userId", c.UserId()))
 	r.onlinePersons.Connect(context.Background(), c)
@@ -211,10 +206,6 @@ func (r *room) addClient(c Client) {
 func (r *room) removeClient(c Client) {
 	slog.Debug("room.removeClient called.", slog.String("clientId", c.ClientId()))
 	r.onlinePersons.Disconnected(context.Background(), c)
-}
-
-func (r *room) onDisconnect(c Client) { // called when client disconnected
-	r.removeClient(c)
 }
 
 func (r *room) IsEmpty() bool {
