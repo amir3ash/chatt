@@ -46,7 +46,6 @@ func newHttpServer(presence *presence.MemService, dispatcher *roomDispatcher) ht
 	s := httpServer{presence, dispatcher, wsh, make(chan *errorHandledConn, 15), nil}
 
 	s.setupWsHandler()
-	go s.connectingHandler()
 
 	return s
 }
@@ -84,23 +83,11 @@ func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.OnConnect(conn)
 }
 
-func (s httpServer) connectingHandler() {
-	for conn := range s.ch {
-		s.OnConnect(conn.conn.(nettyws.Conn))
-	}
-}
-
 func (s *httpServer) setupWsHandler() {
 	s.OnConnect = func(conn nettyws.Conn) {
-		client, ok := conn.Userdata().(Client)
-		if !ok {
-			slog.Error("cant get userdata in websocket.onOpen")
-			conn.WriteClose(1011, "Internal Error")
-			conn.Close()
-			return
-		}
+		client := conn.Userdata().(Client)
+		nettyConn := client.Conn().(*errorHandledConn)
 
-		nettyConn := client.Conn().(errorHandledConn)
 		nettyConn.onError(func(_ error) {
 			s.onlineClients.Disconnected(context.TODO(), client)
 			conn.WriteClose(1001, "going away")
@@ -113,13 +100,10 @@ func (s *httpServer) setupWsHandler() {
 	}
 
 	s.websocket.OnClose = func(conn nettyws.Conn, err error) {
-		client, ok := conn.Userdata().(Client)
-		if ok {
-			s.onlineClients.Disconnected(context.TODO(), client)
-			s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
-		} else {
-			slog.Warn("can not cast connection's userdata to Client sturct", "userData", conn.Userdata())
-		}
+		client := conn.Userdata().(Client)
+
+		s.onlineClients.Disconnected(context.TODO(), client)
+		s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
 
 		slog.Debug("client closed the connection", "remoteAddr", conn.RemoteAddr(), "userId", client.UserId(), "err", err)
 	}
