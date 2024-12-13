@@ -57,3 +57,23 @@ func UserIdFromCtx(ctx context.Context) string {
 type userIdType string
 
 var UserIdCtxKey = userIdType("userId")
+
+// return authenticated user. if not found returns ""
+func UserIdFromCookieHeader(h http.Header) string {
+	lines := h["Cookie"]
+	if len(lines) == 0 {
+		return ""
+	}
+
+	for _, line := range lines {
+		if cookies, err := http.ParseCookie(line); err != nil {
+			for _, c := range cookies {
+				if c.Name == "userId" {
+					return c.Value
+				}
+			}
+		}
+	}
+
+	return ""
+}
