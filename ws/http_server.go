@@ -34,7 +34,7 @@ type httpServer struct {
 	dispatcher    *roomDispatcher
 	websocket     *nettyws.Websocket
 	ch            chan *errorHandledConn
-	OnConnect     func(nettyws.Conn)
+	getUserId     func(http.Header) string
 }
 
 func newHttpServer(presence *presence.MemService, dispatcher *roomDispatcher) httpServer {
@@ -43,7 +43,13 @@ func newHttpServer(presence *presence.MemService, dispatcher *roomDispatcher) ht
 		// nettyws.WithBufferSize(2048, 2048),
 		nettyws.WithNoDelay(true),
 	)
-	s := httpServer{presence, dispatcher, wsh, make(chan *errorHandledConn, 15), nil}
+	s := httpServer{
+		presence,
+		dispatcher,
+		wsh,
+		make(chan *errorHandledConn, 15),
+		authz.UserIdFromCookieHeader,
+	}
 
 	s.setupWsHandler()
 
@@ -65,7 +71,7 @@ func (s httpServer) RunServer() {
 }
 
 func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.websocket.UpgradeHTTP(w, r)
+	_, err := s.websocket.UpgradeHTTP(w, r)
 	if err != nil {
 		if errors.Is(err, nettyws.ErrServerClosed) {
 			http.Error(w, "http: server shutdown", http.StatusNotAcceptable)
@@ -74,37 +80,42 @@ func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-
-	userId := authz.UserIdFromCtx(r.Context())
-
-	nettyConn := &errorHandledConn{conn, func(err error) {}}
-	conn.SetUserdata(Client{"test-clientID", userId, nettyConn})
-
-	s.OnConnect(conn)
 }
 
 func (s *httpServer) setupWsHandler() {
-	s.OnConnect = func(conn nettyws.Conn) {
-		client := conn.Userdata().(Client)
-		nettyConn := client.Conn().(*errorHandledConn)
+	s.websocket.OnOpen = func(conn nettyws.Conn) {
+		userId := s.getUserId(conn.Header())
 
-		nettyConn.onError(func(_ error) {
+		errHConn := &errorHandledConn{conn, func(err error) {}}
+		client := Client{"test-clientID", userId, errHConn}
+
+		conn.SetUserdata(client)
+
+		errHConn.onError(func(_ error) {
 			s.onlineClients.Disconnected(context.TODO(), client)
 			conn.WriteClose(1001, "going away")
 			conn.Close()
 			s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
 		})
 
-		s.onlineClients.Connect(context.TODO(), client)
-		s.dispatcher.dispatch(clientEvent{clientConnected, client})
+		s.onConnect(conn)
 	}
 
-	s.websocket.OnClose = func(conn nettyws.Conn, err error) {
-		client := conn.Userdata().(Client)
+	s.websocket.OnClose = s.onClose
+}
 
-		s.onlineClients.Disconnected(context.TODO(), client)
-		s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
+func (s *httpServer) onConnect(conn nettyws.Conn) {
+	client := conn.Userdata().(Client)
 
-		slog.Debug("client closed the connection", "remoteAddr", conn.RemoteAddr(), "userId", client.UserId(), "err", err)
-	}
+	s.onlineClients.Connect(context.TODO(), client)
+	s.dispatcher.dispatch(clientEvent{clientConnected, client})
+}
+
+func (s *httpServer) onClose(conn nettyws.Conn, err error) {
+	client := conn.Userdata().(Client)
+
+	s.onlineClients.Disconnected(context.TODO(), client)
+	s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
+
+	slog.Debug("client closed the connection", "remoteAddr", conn.RemoteAddr(), "userId", client.UserId(), "err", err)
 }

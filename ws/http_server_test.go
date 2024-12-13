@@ -15,7 +15,7 @@ import (
 )
 
 type mockNettyConn struct {
-	userData Client
+	userData any
 }
 
 // Close implements nettyws.Conn.
@@ -30,7 +30,7 @@ func (m mockNettyConn) Context() context.Context {
 
 // Header implements nettyws.Conn.
 func (m mockNettyConn) Header() http.Header {
-	panic("unimplemented")
+	return nil
 }
 
 // LocalAddr implements nettyws.Conn.
@@ -55,7 +55,7 @@ func (m mockNettyConn) SetReadDeadline(t time.Time) error {
 
 // SetUserdata implements nettyws.Conn.
 func (m mockNettyConn) SetUserdata(userdata interface{}) {
-	panic("unimplemented")
+	m.userData = userdata
 }
 
 // SetWriteDeadline implements nettyws.Conn.
@@ -84,32 +84,7 @@ func toWsSchema(url string) string {
 	return strings.Replace(url, "http", "ws", 1)
 }
 
-func TestHttpServer_OnConnect_called(t *testing.T) {
-	httpServer := newHttpServer(nil, nil)
-
-	onConnectCalled := make(chan bool, 1)
-	httpServer.OnConnect = func(c nettyws.Conn) {
-		client, ok := c.Userdata().(Client)
-		assert.True(t, ok, "connection's userdata must be Client")
-
-		_, ok = client.Conn().(*errorHandledConn)
-		assert.True(t, ok, "client's connection must be errHandledConn")
-
-		onConnectCalled <- true
-	}
-
-	server := httptest.NewServer(httpServer)
-	defer server.Close()
-
-	ws := nettyws.NewWebsocket()
-
-	_, err := ws.Open(toWsSchema(server.URL))
-	assert.NoError(t, err, "can not connect to server")
-
-	assert.True(t, <-onConnectCalled, "httpServer.OnConnect should be called")
-}
-
-func TestHttpServer_OnConnect(t *testing.T) {
+func TestHttpServer_onConnect(t *testing.T) {
 	presence := presence.NewMemService()
 	dispatcher := NewRoomDispatcher()
 	httpServer := newHttpServer(presence, dispatcher)
@@ -125,7 +100,7 @@ func TestHttpServer_OnConnect(t *testing.T) {
 		clientEvCalled <- true
 	})
 
-	httpServer.OnConnect(mockNettyConn{userData: cli})
+	httpServer.onConnect(mockNettyConn{userData: cli})
 
 	devices := presence.GetDevicesForUsers(cli.UserId())
 	assert.Len(t, devices, 1)
@@ -135,8 +110,6 @@ func TestHttpServer_OnConnect(t *testing.T) {
 }
 
 func TestHttpServer_OnClose_called(t *testing.T) {
-	t.Skip("getting and setting connection's userdata causes race condition")
-
 	httpServer := newHttpServer(presence.NewMemService(), NewRoomDispatcher())
 
 	onClosedCalled := make(chan bool, 1)
@@ -170,7 +143,7 @@ func TestHttpServer_OnClose(t *testing.T) {
 
 	cli := Client{"cId", "uId", &errorHandledConn{}}
 	conn := mockNettyConn{userData: cli}
-	httpServer.OnConnect(conn)
+	httpServer.onConnect(conn)
 
 	devices := presence.GetDevicesForUsers(cli.UserId())
 	assert.Len(t, devices, 1)
