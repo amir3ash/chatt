@@ -3,10 +3,15 @@ package ws
 import (
 	"chat-system/core/repo"
 )
+
 type MessageWatcher interface {
-	WatchMessages() (stream <-chan *repo.ChangeStream, cancel func()) 
+	// returns change log channel [*repo.ChangeStream]. 
+	// cancel func should be called.
+	WatchMessages() (stream <-chan *repo.ChangeStream, cancel func())
 }
 
+// reads all [*repo.ChangeStream] from a channel
+// and calls [roomServer.SendMessageTo] if [repo.ChangeStream.OperationType] is "insert".
 func ReadChangeStream(r MessageWatcher, server *roomServer) {
 	stream, cancel := r.WatchMessages()
 	defer cancel()
