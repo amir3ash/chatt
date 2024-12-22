@@ -10,14 +10,20 @@ import (
 	"sync"
 )
 
+// a sharded goroutine worker pool for writing to users' [Conn]
+// to reduce all generated goroutine size.
 var workerIns shardedWorker
 
 type whoCanReadTopic interface {
 	WhoCanWatchTopic(topicId string) ([]string, error)
+
+	// returns authorized topics for the input userId
+	// among all input topics.
 	TopicsWhichUserCanWatch(userId string, topics []string) (topicIds []string, err error)
 }
 
 type devicesGetter interface {
+	// gets devices for online users
 	GetDevicesForUsers(userIds ...string) []presence.Device
 }
 
@@ -26,6 +32,7 @@ func init() {
 	go workerIns.run()
 }
 
+// roomServer manages all rooms
 type roomServer struct {
 	onlinePersons devicesGetter
 	authz         whoCanReadTopic
@@ -81,6 +88,9 @@ func (r *roomServer) leaveClientFromRoom(c Client, room *room) {
 	room.removeClient(c)
 }
 
+// onClientConnected gets authorzided topics
+// by calling [whoCanReadTopic]'s function and
+// adds the [Client] c to authorized rooms.
 func (r *roomServer) onClientConnected(c Client) {
 	serverTopics := make([]string, 0, len(r.rooms))
 	for roomId := range r.rooms {
@@ -100,6 +110,8 @@ func (r *roomServer) onClientConnected(c Client) {
 	}
 }
 
+// onClientDisconnected remove [Client] c from rooms which connected before.
+// then deletes rooms with zero clients.
 func (r *roomServer) onClientDisconnected(c Client) {
 	r.clientsMutex.RLock()
 	rooms := slices.Clone(r.clientsRooms[c.ClientId()])
@@ -112,7 +124,7 @@ func (r *roomServer) onClientDisconnected(c Client) {
 		room, ok := r.rooms[roomId]
 		if !ok {
 			slog.Warn("client's rooms is not synchronized with rooms",
-				slog.String("clientId", c.ClientId()), slog.String("roomId", roomId))	
+				slog.String("clientId", c.ClientId()), slog.String("roomId", roomId))
 			continue
 		}
 
@@ -124,6 +136,8 @@ func (r *roomServer) onClientDisconnected(c Client) {
 	}
 }
 
+// returns [room] with specified topicID.
+// if not found, it creates new room and returns it.
 func (r *roomServer) getRoom(topicID string) *room {
 	r.RLock()
 	roomIns, found := r.rooms[topicID]
@@ -135,6 +149,9 @@ func (r *roomServer) getRoom(topicID string) *room {
 	return roomIns
 }
 
+// SendMessageTo sends [messages.Message] msg to the room with specified topicId.
+//
+// it gets existing [room] or creates new room, and calls room's SendMessage func.
 func (r *roomServer) SendMessageTo(topicId string, msg *messages.Message) {
 	room := r.getRoom(topicId)
 	if room == nil {
@@ -144,6 +161,11 @@ func (r *roomServer) SendMessageTo(topicId string, msg *messages.Message) {
 	room.SendMessage(msg)
 }
 
+// createRoom creates new [room] with online authorzed users.
+//
+//  1. it gets all authrized users by calling [whoCanReadTopic]'s WhoCanWatchTopic
+//  2. filter online users
+//  3. adds all online authrized users to the room.
 func (r *roomServer) createRoom(topicId string) *room {
 	r.Lock()
 	defer r.Unlock()
@@ -179,6 +201,7 @@ func devicesToClients(devs []presence.Device) []Client {
 
 // --------------
 
+// room contains online clients for a particular topic.
 type room struct {
 	ID               string
 	onlinePersons    *presence.MemService
@@ -198,11 +221,13 @@ func newRoom(id string, connections []Client) *room {
 	return &room{id, persons, make([]func(string), 0), sync.RWMutex{}}
 }
 
+// adds the [Client] c to online users of the [room] r.
 func (r *room) addClient(c Client) {
 	slog.Debug("room.addConn called.", slog.String("userId", c.UserId()))
 	r.onlinePersons.Connect(context.Background(), c)
 }
 
+// removes the [Client] c from online users of the [room] r.
 func (r *room) removeClient(c Client) {
 	slog.Debug("room.removeClient called.", slog.String("clientId", c.ClientId()))
 	r.onlinePersons.Disconnected(context.Background(), c)
@@ -212,6 +237,10 @@ func (r *room) IsEmpty() bool {
 	return r.onlinePersons.IsEmpty()
 }
 
+// Sends [*messages.Message] to online users of the [room] r.
+//
+// SendMessage encodes the messages to json and send the encoded messages
+// to all client's [Conn].
 func (r *room) SendMessage(m *messages.Message) { // maybe message will be inconsistence with DB
 	slog.Debug("room.SendMessage called", slog.String("topicId", m.TopicID), "onlinepersions", r.onlinePersons)
 	bytes, _ := json.Marshal(m)
