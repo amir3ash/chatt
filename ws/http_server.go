@@ -17,6 +17,7 @@ type errorHandledConn struct {
 	onErr func(error)
 }
 
+// calls the function onErr in a new goroutine in case of none nil error.
 func (c errorHandledConn) Write(b []byte) error {
 	err := c.conn.Write(b)
 	if err != nil {
@@ -29,12 +30,13 @@ func (c *errorHandledConn) onError(f func(error)) {
 	c.onErr = f
 }
 
+// httpServer manages all online clients and upgrading http requests to websocket.
 type httpServer struct {
 	onlineClients *presence.MemService
 	dispatcher    *roomDispatcher
 	websocket     *nettyws.Websocket
 	ch            chan *errorHandledConn
-	getUserId     func(http.Header) string
+	getUserId     func(http.Header) string // gets userId from [http.Header]
 }
 
 func newHttpServer(presence *presence.MemService, dispatcher *roomDispatcher) httpServer {
@@ -56,6 +58,7 @@ func newHttpServer(presence *presence.MemService, dispatcher *roomDispatcher) ht
 	return s
 }
 
+// listens on port 7100 and handles websockets on "/ws" path.
 func (s httpServer) RunServer() {
 	// TODO add allowed origins to prevent CSRF
 	go func() {
@@ -70,6 +73,7 @@ func (s httpServer) RunServer() {
 	}()
 }
 
+// implements [http.Handler] to upgrade requests to websocket.
 func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, err := s.websocket.UpgradeHTTP(w, r)
 	if err != nil {
@@ -104,6 +108,7 @@ func (s *httpServer) setupWsHandler() {
 	s.websocket.OnClose = s.onClose
 }
 
+// adds conn's [Client] to s.onlineClients and dispatches an event.
 func (s *httpServer) onConnect(conn nettyws.Conn) {
 	client := conn.Userdata().(Client)
 
@@ -111,6 +116,7 @@ func (s *httpServer) onConnect(conn nettyws.Conn) {
 	s.dispatcher.dispatch(clientEvent{clientConnected, client})
 }
 
+// removes conn's [Client] from s.onlineClients and dispatches an event.
 func (s *httpServer) onClose(conn nettyws.Conn, err error) {
 	client := conn.Userdata().(Client)
 

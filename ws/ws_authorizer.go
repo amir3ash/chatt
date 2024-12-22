@@ -7,6 +7,7 @@ import (
 	"slices"
 )
 
+// implements [whoCanReadTopic]
 type wsAuthorizer struct {
 	authz *authz.Authoriz
 }
