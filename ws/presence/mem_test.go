@@ -29,14 +29,14 @@ var _ Device = mockDevice{}
 
 func TestMemService_Connect(t *testing.T) {
 	ctx := context.Background()
-	memService := NewMemService()
+	memService := NewMemService[mockDevice]()
 
 	tests := []struct {
 		name string
-		devs []Device
+		devs []mockDevice
 	}{
-		{"one client", []Device{mockDevice{"me", "client1"}}},
-		{"two client", []Device{mockDevice{"user2", "cli_21"}, mockDevice{"user2", "cli_22"}}},
+		{"one client", []mockDevice{mockDevice{"me", "client1"}}},
+		{"two client", []mockDevice{mockDevice{"user2", "cli_21"}, mockDevice{"user2", "cli_22"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -57,7 +57,7 @@ func TestMemService_Connect(t *testing.T) {
 	}
 }
 
-func deviceExits(t *testing.T, s *MemService, dev Device) bool {
+func deviceExits[T Device](t *testing.T, s *MemService[T], dev T) bool {
 	t.Helper()
 
 	// load devices for ther user with his userId
@@ -66,12 +66,12 @@ func deviceExits(t *testing.T, s *MemService, dev Device) bool {
 		return false
 	}
 
-	devices, ok := valuse.([]Device)
+	devices, ok := valuse.([]T)
 	if !ok {
 		t.Errorf("MemService.onlinePersons not stores Device[], values: %+v", valuse)
 	}
 
-	return slices.ContainsFunc(devices, func(d Device) bool {
+	return slices.ContainsFunc(devices, func(d T) bool {
 		return d.ClientId() == dev.ClientId() &&
 			d.UserId() == dev.UserId()
 	})
@@ -82,13 +82,13 @@ func TestMemService_Disconnected(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		devs         []Device
-		disconnected Device
+		devs         []mockDevice
+		disconnected mockDevice
 		wantErr      bool
 	}{
-		{"empty", []Device{}, mockDevice{"user", "cli"}, false},
-		{"one client", []Device{mockDevice{"user", "cli"}}, mockDevice{"user", "cli"}, false},
-		{"three client", []Device{
+		{"empty", []mockDevice{}, mockDevice{"user", "cli"}, false},
+		{"one client", []mockDevice{mockDevice{"user", "cli"}}, mockDevice{"user", "cli"}, false},
+		{"three client", []mockDevice{
 			mockDevice{"u2", "c_21"}, mockDevice{"u2", "c_22"}, mockDevice{"u2", "c_23"},
 			mockDevice{"other", "oCli"},
 		}, mockDevice{"u2", "c_22"}, false},
@@ -96,7 +96,7 @@ func TestMemService_Disconnected(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewMemService()
+			s := NewMemService[mockDevice]()
 
 			// pre connected devices
 			for _, device := range tt.devs {
@@ -127,7 +127,7 @@ func TestMemService_Disconnected(t *testing.T) {
 func TestMemService_GetOnlineClients(t *testing.T) {
 	ctx := context.Background()
 
-	genDevices := func(usersNum, devsNum int) (devs []Device) {
+	genDevices := func(usersNum, devsNum int) (devs []mockDevice) {
 		cli := usersNum * devsNum
 		for u := range usersNum {
 			devs = append(devs, mockDevice{"u" + fmt.Sprint(u), "d" + fmt.Sprint(cli)})
@@ -137,7 +137,7 @@ func TestMemService_GetOnlineClients(t *testing.T) {
 	}
 
 	t.Run("tt.name", func(t *testing.T) {
-		s := NewMemService()
+		s := NewMemService[mockDevice]()
 
 		devices := genDevices(10, 3)
 
@@ -151,7 +151,7 @@ func TestMemService_GetOnlineClients(t *testing.T) {
 			return
 		}
 
-		cmp := func(a, b Device) int { return strings.Compare(a.ClientId(), b.ClientId()) }
+		cmp := func(a, b mockDevice) int { return strings.Compare(a.ClientId(), b.ClientId()) }
 
 		gotSlice := slices.Collect(got)
 
@@ -167,21 +167,21 @@ func TestMemService_GetOnlineClients(t *testing.T) {
 func TestMemService_GetDevicesForUsers(t *testing.T) {
 	tests := []struct {
 		name            string
-		connectedDevs   []Device
+		connectedDevs   []mockDevice
 		usersArg        []string
 		expectedClients []string
 	}{
 		{"empty", nil, nil, nil},
-		{"all devs", []Device{mockDevice{"u1", "cli_11"}, mockDevice{"u2", "cli_22"}},
+		{"all devs", []mockDevice{mockDevice{"u1", "cli_11"}, mockDevice{"u2", "cli_22"}},
 			[]string{"u1", "u2"}, []string{"cli_11", "cli_22"}},
-		{"all devs", []Device{mockDevice{"u1", "cli_11"}, mockDevice{"u1", "cli_12"}, mockDevice{"u2", "cli_22"}},
+		{"all devs", []mockDevice{mockDevice{"u1", "cli_11"}, mockDevice{"u1", "cli_12"}, mockDevice{"u2", "cli_22"}},
 			[]string{"u1"}, []string{"cli_11", "cli_12"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			s := NewMemService()
+			s := NewMemService[mockDevice]()
 
 			for _, dev := range tt.connectedDevs {
 				s.Connect(ctx, dev)
@@ -214,7 +214,7 @@ func TestMemService_IsEmpty(t *testing.T) {
 	for _, tt := range tests {
 		if tt.expected == false {
 			t.Run(tt.name, func(t *testing.T) {
-				s := NewMemService()
+				s := NewMemService[mockDevice]()
 				wg := sync.WaitGroup{}
 				wg.Add(tt.connectedDevs)
 
@@ -236,7 +236,7 @@ func TestMemService_IsEmpty(t *testing.T) {
 
 		if tt.expected == true {
 			t.Run(tt.name, func(t *testing.T) {
-				s := NewMemService()
+				s := NewMemService[mockDevice]()
 				wg := sync.WaitGroup{}
 				wg.Add(tt.connectedDevs)
 

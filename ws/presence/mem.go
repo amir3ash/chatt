@@ -12,30 +12,30 @@ type Person interface {
 
 type Device interface {
 	Person
-	ClientId() string
+	ClientId() string // ClientId must be unique for all devices
 }
 
-type MemService struct {
+type MemService[T Device] struct {
 	onlinePersons *sync.Map // map<string, []Device>
 	mu            sync.RWMutex
 	len           int
 }
 
-func NewMemService() *MemService {
-	return &MemService{&sync.Map{}, sync.RWMutex{}, 0}
+func NewMemService[T Device]() *MemService[T] {
+	return &MemService[T]{&sync.Map{}, sync.RWMutex{}, 0}
 }
 
 // appends the device and returns nil.
-func (s *MemService) Connect(ctx context.Context, dev Device) error {
+func (s *MemService[T]) Connect(ctx context.Context, dev T) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	userId := dev.UserId()
 	connections, ok := s.onlinePersons.Load(userId)
 	if ok {
-		connections = append(connections.([]Device), dev)
+		connections = append(connections.([]T), dev)
 	} else {
-		connections = []Device{dev}
+		connections = []T{dev}
 	}
 
 	s.onlinePersons.Store(userId, connections)
@@ -46,7 +46,7 @@ func (s *MemService) Connect(ctx context.Context, dev Device) error {
 }
 
 // removes the device and returns nil.
-func (s *MemService) Disconnected(_ context.Context, dev Device) error {
+func (s *MemService[T]) Disconnected(_ context.Context, dev T) error {
 	userId := dev.UserId()
 
 	s.mu.Lock()
@@ -56,7 +56,7 @@ func (s *MemService) Disconnected(_ context.Context, dev Device) error {
 	if !ok {
 		return nil
 	}
-	connections := v.([]Device)
+	connections := v.([]T)
 
 	connections, found := findAndDelete(connections, dev)
 	if !found {
@@ -79,10 +79,10 @@ func (s *MemService) Disconnected(_ context.Context, dev Device) error {
 // func (s MemService) GetOnlineUsers(_ context.Context, limit int) (iter.Seq[Person], error)
 
 // return an iterator of devices and nil.
-func (s *MemService) GetOnlineClients(_ context.Context) (iter.Seq[Device], error) {
-	return func(yield func(Device) bool) {
+func (s *MemService[T]) GetOnlineClients(_ context.Context) (iter.Seq[T], error) {
+	return func(yield func(T) bool) {
 		s.onlinePersons.Range(func(key, value any) bool {
-			clients := value.([]Device)
+			clients := value.([]T)
 			for _, c := range clients {
 				if !yield(c) {
 					return false
@@ -94,22 +94,22 @@ func (s *MemService) GetOnlineClients(_ context.Context) (iter.Seq[Device], erro
 	}, nil
 }
 
-func (s *MemService) GetClientsForUserId(user string) []Device {
+func (s *MemService[T]) GetClientsForUserId(user string) []T {
 	v, ok := s.onlinePersons.Load(user)
 	if !ok {
 		return nil
 	}
-	return v.([]Device)
+	return v.([]T)
 }
 
-func (s *MemService) IsEmpty() bool {
+func (s *MemService[T]) IsEmpty() bool {
 	s.mu.RLock()
 	empty := s.len == 0
 	s.mu.RUnlock()
 	return empty
 }
 
-func (s *MemService) GetDevicesForUsers(userIds ...string) (res []Device) {
+func (s *MemService[T]) GetDevicesForUsers(userIds ...string) (res []T) {
 	for _, u := range userIds {
 		clients := s.GetClientsForUserId(u)
 		res = append(res, clients...)
@@ -119,11 +119,13 @@ func (s *MemService) GetDevicesForUsers(userIds ...string) (res []Device) {
 
 // Deletes item from slice then insert zero value at end (for GC).
 // Be careful, it reorders the slice
-func findAndDelete[T comparable](list []T, elem T) (res []T, deleted bool) {
+func findAndDelete[T Device](list []T, elem T) (res []T, deleted bool) {
 	var zero T
 	lastIdx := len(list) - 1
+	clientId := elem.ClientId()
+
 	for i := range list {
-		if list[i] == elem {
+		if list[i].ClientId() == clientId {
 			list[i] = list[lastIdx]
 			list[lastIdx] = zero
 			list = list[:lastIdx]
