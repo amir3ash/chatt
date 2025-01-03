@@ -3,7 +3,6 @@ package ws
 import (
 	"bytes"
 	"chat-system/core/messages"
-	"chat-system/ws/presence"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -62,7 +61,7 @@ func (m *MockClient) Conn() Conn {
 func roomContainsClient(r *room, cli Client) bool {
 	return slices.ContainsFunc(
 		r.onlinePersons.GetClientsForUserId(cli.UserId()),
-		func(dev presence.Device) bool {
+		func(dev Client) bool {
 			return dev.ClientId() == cli.clientId && dev.UserId() == cli.UserId()
 		})
 }

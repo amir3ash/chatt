@@ -1,7 +1,6 @@
 package ws
 
 import (
-	"chat-system/ws/presence"
 	"fmt"
 	"slices"
 	"testing"
@@ -12,11 +11,11 @@ type mockDeviceGetter struct {
 }
 
 // GetDevicesForUsers implements devicesGetter.
-func (m mockDeviceGetter) GetDevicesForUsers(userIds ...string) []presence.Device {
+func (m mockDeviceGetter) GetDevicesForUsers(userIds ...string) []Client {
 	return nil
 }
 
-var _ devicesGetter = mockDeviceGetter{}
+var _ devicesGetter[Client] = mockDeviceGetter{}
 
 func TestRoomServer_getRoom(t *testing.T) {
 	r := NewRoomServer(mockDeviceGetter{}, &TestAuthz{})

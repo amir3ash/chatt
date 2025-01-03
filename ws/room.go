@@ -22,9 +22,9 @@ type whoCanReadTopic interface {
 	TopicsWhichUserCanWatch(userId string, topics []string) (topicIds []string, err error)
 }
 
-type devicesGetter interface {
+type devicesGetter[T presence.Device] interface {
 	// gets devices for online users
-	GetDevicesForUsers(userIds ...string) []presence.Device
+	GetDevicesForUsers(userIds ...string) []T
 }
 
 func init() {
@@ -34,7 +34,7 @@ func init() {
 
 // roomServer manages all rooms
 type roomServer struct {
-	onlinePersons devicesGetter
+	onlinePersons devicesGetter[Client]
 	authz         whoCanReadTopic
 	rooms         map[string]*room
 	clientsRooms  map[string][]string // clientId -> []roomId. rooms which the user connected to.
@@ -42,7 +42,7 @@ type roomServer struct {
 	sync.RWMutex
 }
 
-func NewRoomServer(b devicesGetter, authz whoCanReadTopic) *roomServer {
+func NewRoomServer(b devicesGetter[Client], authz whoCanReadTopic) *roomServer {
 	server := roomServer{
 		b, authz, make(map[string]*room), make(map[string][]string),
 		sync.RWMutex{}, sync.RWMutex{},
@@ -183,7 +183,7 @@ func (r *roomServer) createRoom(topicId string) *room {
 	userConnections := r.onlinePersons.GetDevicesForUsers(userIds...)
 	slog.Debug("roomServer.createRoom", "topicId", topicId, "userConns", userConnections)
 
-	room = newRoom(topicId, devicesToClients(userConnections))
+	room = newRoom(topicId, userConnections)
 	r.rooms[topicId] = room
 
 	return room
@@ -191,27 +191,19 @@ func (r *roomServer) createRoom(topicId string) *room {
 
 var _ presence.Device = Client{}
 
-func devicesToClients(devs []presence.Device) []Client {
-	res := make([]Client, 0, len(devs))
-	for i := range devs {
-		res = append(res, devs[i].(Client))
-	}
-	return res
-}
-
 // --------------
 
 // room contains online clients for a particular topic.
 type room struct {
 	ID               string
-	onlinePersons    *presence.MemService
+	onlinePersons    *presence.MemService[Client]
 	destroyObservers []func(roomId string)
 	mu               sync.RWMutex
 }
 
 func newRoom(id string, connections []Client) *room {
 	slog.Debug("creating new room", slog.String("id", id))
-	persons := presence.NewMemService()
+	persons := presence.NewMemService[Client]()
 	ctx := context.Background()
 
 	for _, c := range connections { // TODO: optimize it
@@ -247,13 +239,7 @@ func (r *room) SendMessage(m *messages.Message) { // maybe message will be incon
 
 	clients, _ := r.onlinePersons.GetOnlineClients(context.Background())
 
-	for dev := range clients {
-		client, ok := dev.(Client)
-		if !ok {
-			slog.Warn("connection is nil")
-			continue
-		}
-
+	for client := range clients {
 		workerIns.do(client.UserId(), func() {
 			if err := client.Conn().Write(bytes); err != nil {
 				// never here

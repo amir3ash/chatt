@@ -85,7 +85,7 @@ func toWsSchema(url string) string {
 }
 
 func TestHttpServer_onConnect(t *testing.T) {
-	presence := presence.NewMemService()
+	presence := presence.NewMemService[Client]()
 	dispatcher := NewRoomDispatcher()
 	httpServer := newHttpServer(presence, dispatcher)
 
@@ -110,7 +110,7 @@ func TestHttpServer_onConnect(t *testing.T) {
 }
 
 func TestHttpServer_OnClose_called(t *testing.T) {
-	httpServer := newHttpServer(presence.NewMemService(), NewRoomDispatcher())
+	httpServer := newHttpServer(presence.NewMemService[Client](), NewRoomDispatcher())
 
 	onClosedCalled := make(chan bool, 1)
 	httpServer.websocket.OnClose = func(conn nettyws.Conn, err error) {
@@ -137,7 +137,7 @@ func TestHttpServer_OnClose_called(t *testing.T) {
 }
 
 func TestHttpServer_OnClose(t *testing.T) {
-	presence := presence.NewMemService()
+	presence := presence.NewMemService[Client]()
 	dispatcher := NewRoomDispatcher()
 	httpServer := newHttpServer(presence, dispatcher)
 

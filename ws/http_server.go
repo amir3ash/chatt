@@ -32,14 +32,14 @@ func (c *errorHandledConn) onError(f func(error)) {
 
 // httpServer manages all online clients and upgrading http requests to websocket.
 type httpServer struct {
-	onlineClients *presence.MemService
+	onlineClients *presence.MemService[Client]
 	dispatcher    *roomDispatcher
 	websocket     *nettyws.Websocket
 	ch            chan *errorHandledConn
 	getUserId     func(http.Header) string // gets userId from [http.Header]
 }
 
-func newHttpServer(presence *presence.MemService, dispatcher *roomDispatcher) httpServer {
+func newHttpServer(presence *presence.MemService[Client], dispatcher *roomDispatcher) httpServer {
 	wsh := nettyws.NewWebsocket(
 		nettyws.WithAsyncWrite(512, false),
 		// nettyws.WithBufferSize(2048, 2048),
@@ -64,13 +64,17 @@ func (s httpServer) RunServer() {
 	go func() {
 		fmt.Println("listen on ws://:7100")
 
-		handler := authz.NewHttpAuthMiddleware(s)
-		http.Handle("/ws", handler)
-
-		if err := http.ListenAndServe(":7100", handler); err != nil {
+		if err := http.ListenAndServe(":7100", s.setupHandler()); err != nil {
 			slog.Error("http can't listen on port 7100", "err", err)
 		}
 	}()
+}
+
+func (s httpServer) setupHandler() http.Handler {
+	handler := authz.NewHttpAuthMiddleware(s)
+	// http.Handle("/ws", handler)
+
+	return handler
 }
 
 // implements [http.Handler] to upgrade requests to websocket.

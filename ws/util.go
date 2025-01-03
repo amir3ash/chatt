@@ -7,7 +7,7 @@ import (
 )
 
 func Run(watcher MessageWatcher, authz *authz.Authoriz) {
-	onlineUsersPresence := presence.NewMemService()
+	onlineUsersPresence := presence.NewMemService[Client]()
 
 	roomServer := NewRoomServer(onlineUsersPresence, NewWSAuthorizer(authz))
 
