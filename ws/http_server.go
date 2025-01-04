@@ -95,7 +95,7 @@ func (s *httpServer) setupWsHandler() {
 		userId := s.getUserId(conn.Header())
 
 		errHConn := &errorHandledConn{conn, func(err error) {}}
-		client := Client{"test-clientID", userId, errHConn}
+		client := Client{userId + randomClientIdSuffix(), userId, errHConn}
 
 		conn.SetUserdata(client)
 

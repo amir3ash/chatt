@@ -5,6 +5,7 @@ import (
 	"chat-system/ws/presence"
 	"hash/fnv"
 	"log/slog"
+	"math/rand/v2"
 )
 
 func Run(watcher MessageWatcher, authz *authz.Authoriz) {
@@ -100,4 +101,20 @@ func getHash(s string) uint32 {
 	h := fnv.New32a()
 	h.Write([]byte(s))
 	return h.Sum32()
+}
+
+// returns "-A8df" like random string which starts with '-'.
+func randomClientIdSuffix() string {
+	const s = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const all = uint32(len(s))
+	const numChars = 4
+
+	suffix := make([]byte, numChars+1)
+	suffix[0] = byte('-')
+	for i := 1; i < numChars+1; i++ {
+		b := s[rand.Uint32N(all)]
+		suffix[i] = b
+	}
+
+	return string(suffix)
 }
