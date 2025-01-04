@@ -6,13 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"runtime"
 	"slices"
 	"sync"
 )
 
 // a sharded goroutine worker pool for writing to users' [Conn]
 // to reduce all generated goroutine size.
-var workerIns shardedWorker
+var workerIns shardedWriter
 
 type whoCanReadTopic interface {
 	WhoCanWatchTopic(topicId string) ([]string, error)
@@ -28,7 +29,7 @@ type devicesGetter[T presence.Device] interface {
 }
 
 func init() {
-	workerIns = newShardedWorker(16)
+	workerIns = newShardedWriter(min(2, uint32(runtime.NumCPU())))
 	go workerIns.run()
 }
 
@@ -240,14 +241,6 @@ func (r *room) SendMessage(m *messages.Message) { // maybe message will be incon
 	clients, _ := r.onlinePersons.GetOnlineClients(context.Background())
 
 	for client := range clients {
-		workerIns.do(client.UserId(), func() {
-			if err := client.Conn().Write(bytes); err != nil {
-				// never here
-				slog.Error("can not write to client's connection",
-					slog.String("userId", client.UserId()),
-					slog.String("clientId", client.ClientId()),
-					"err", err)
-			}
-		})
+		workerIns.writeTo(client, bytes)
 	}
 }

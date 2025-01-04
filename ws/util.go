@@ -4,6 +4,7 @@ import (
 	"chat-system/authz"
 	"chat-system/ws/presence"
 	"hash/fnv"
+	"log/slog"
 )
 
 func Run(watcher MessageWatcher, authz *authz.Authoriz) {
@@ -43,35 +44,55 @@ func findAndDelete[T comparable](list []T, elem T) []T {
 	return list
 }
 
-type workerJob func()
-type shardedWorker struct {
+type workerJob struct {
+	cli     Client
+	message []byte
+}
+type shardedWriter struct {
 	num        uint32
 	workerJobs []chan workerJob
 }
 
-// Creates multiple job chans and goroutins to shard jobs by the hash of the string
-func newShardedWorker(num uint32) shardedWorker {
+// Creates multiple job chans and goroutins
+// to shard jobs by the hash of the client's userId.
+func newShardedWriter(num uint32) shardedWriter {
 	j := make([]chan workerJob, num)
 	for i := range j {
 		j[i] = make(chan workerJob, 1)
 	}
 
-	return shardedWorker{num: num, workerJobs: j}
+	return shardedWriter{num: num, workerJobs: j}
 }
 
-func (w shardedWorker) do(id string, f func()) {
-	index := getHash(id) % w.num
-	w.workerJobs[index] <- f
+// Writes to client's [Conn] in a seperate goroutine.
+// It logs errors.
+//
+//  1. It prevent DoS in case of slow connection (ex. full tcp queues) by sharding
+//     clients between goroutines.
+//  2. It prevents race conditions (ex. unordered messages or unexpected closed connection errors)
+func (w shardedWriter) writeTo(cli Client, msg []byte) {
+	index := getHash(cli.userId) % w.num
+	w.workerJobs[index] <- workerJob{cli: cli, message: msg}
 }
 
-func (w shardedWorker) run() {
+func (w shardedWriter) run() {
 	for i := uint32(0); i < w.num; i++ {
 		go func(workerIdx uint32) {
 			jobs := w.workerJobs[workerIdx]
 			for job := range jobs {
-				job()
+				w.write(&job.cli, job.message)
 			}
 		}(i)
+	}
+}
+
+func (w shardedWriter) write(client *Client, bytes []byte) {
+	if err := client.Conn().Write(bytes); err != nil {
+		// never here
+		slog.Error("can not write to client's connection",
+			slog.String("userId", client.UserId()),
+			slog.String("clientId", client.ClientId()),
+			"err", err)
 	}
 }
 
