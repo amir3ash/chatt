@@ -87,7 +87,7 @@ func toWsSchema(url string) string {
 func TestHttpServer_onConnect(t *testing.T) {
 	presence := presence.NewMemService[Client]()
 	dispatcher := NewRoomDispatcher()
-	httpServer := newHttpServer(presence, dispatcher)
+	httpServer := newWsHandler(presence, dispatcher)
 
 	cli := Client{"clientId", "userId", &errorHandledConn{}}
 
@@ -110,7 +110,7 @@ func TestHttpServer_onConnect(t *testing.T) {
 }
 
 func TestHttpServer_OnClose_called(t *testing.T) {
-	httpServer := newHttpServer(presence.NewMemService[Client](), NewRoomDispatcher())
+	httpServer := newWsHandler(presence.NewMemService[Client](), NewRoomDispatcher())
 
 	onClosedCalled := make(chan bool, 1)
 	httpServer.websocket.OnClose = func(conn nettyws.Conn, err error) {
@@ -139,7 +139,7 @@ func TestHttpServer_OnClose_called(t *testing.T) {
 func TestHttpServer_OnClose(t *testing.T) {
 	presence := presence.NewMemService[Client]()
 	dispatcher := NewRoomDispatcher()
-	httpServer := newHttpServer(presence, dispatcher)
+	httpServer := newWsHandler(presence, dispatcher)
 
 	cli := Client{"cId", "uId", &errorHandledConn{}}
 	conn := mockNettyConn{userData: cli}
@@ -166,4 +166,4 @@ func TestHttpServer_OnClose(t *testing.T) {
 	assert.True(t, <-clientEvCalled, "event subscriber must be called")
 }
 
-var _ http.Handler = httpServer{}
+var _ http.Handler = wsHandler{}

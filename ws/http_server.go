@@ -21,7 +21,7 @@ type errorHandledConn struct {
 func (c errorHandledConn) Write(b []byte) error {
 	err := c.conn.Write(b)
 	if err != nil {
-		slog.Error("cant write to websocket", "err", err)
+		slog.Warn("cant write to websocket", "err", err)
 		go c.onErr(err)
 	}
 	return nil
@@ -30,26 +30,24 @@ func (c *errorHandledConn) onError(f func(error)) {
 	c.onErr = f
 }
 
-// httpServer manages all online clients and upgrading http requests to websocket.
-type httpServer struct {
+// wsHandler manages all online clients and upgrading http requests to websocket.
+type wsHandler struct {
 	onlineClients *presence.MemService[Client]
 	dispatcher    *roomDispatcher
 	websocket     *nettyws.Websocket
-	ch            chan *errorHandledConn
 	getUserId     func(http.Header) string // gets userId from [http.Header]
 }
 
-func newHttpServer(presence *presence.MemService[Client], dispatcher *roomDispatcher) httpServer {
+func newWsHandler(presence *presence.MemService[Client], dispatcher *roomDispatcher) wsHandler {
 	wsh := nettyws.NewWebsocket(
 		nettyws.WithAsyncWrite(512, false),
 		// nettyws.WithBufferSize(2048, 2048),
 		nettyws.WithNoDelay(true),
 	)
-	s := httpServer{
+	s := wsHandler{
 		presence,
 		dispatcher,
 		wsh,
-		make(chan *errorHandledConn, 15),
 		authz.UserIdFromCookieHeader,
 	}
 
@@ -59,7 +57,7 @@ func newHttpServer(presence *presence.MemService[Client], dispatcher *roomDispat
 }
 
 // listens on port 7100 and handles websockets on "/ws" path.
-func (s httpServer) RunServer() {
+func (s wsHandler) RunServer() {
 	// TODO add allowed origins to prevent CSRF
 	go func() {
 		fmt.Println("listen on ws://:7100")
@@ -70,7 +68,7 @@ func (s httpServer) RunServer() {
 	}()
 }
 
-func (s httpServer) setupHandler() http.Handler {
+func (s wsHandler) setupHandler() http.Handler {
 	handler := authz.NewHttpAuthMiddleware(s)
 	// http.Handle("/ws", handler)
 
@@ -78,7 +76,7 @@ func (s httpServer) setupHandler() http.Handler {
 }
 
 // implements [http.Handler] to upgrade requests to websocket.
-func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, err := s.websocket.UpgradeHTTP(w, r)
 	if err != nil {
 		if errors.Is(err, nettyws.ErrServerClosed) {
@@ -90,7 +88,7 @@ func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *httpServer) setupWsHandler() {
+func (s *wsHandler) setupWsHandler() {
 	s.websocket.OnOpen = func(conn nettyws.Conn) {
 		userId := s.getUserId(conn.Header())
 
@@ -113,7 +111,7 @@ func (s *httpServer) setupWsHandler() {
 }
 
 // adds conn's [Client] to s.onlineClients and dispatches an event.
-func (s *httpServer) onConnect(conn nettyws.Conn) {
+func (s *wsHandler) onConnect(conn nettyws.Conn) {
 	client := conn.Userdata().(Client)
 
 	s.onlineClients.Connect(context.TODO(), client)
@@ -121,7 +119,7 @@ func (s *httpServer) onConnect(conn nettyws.Conn) {
 }
 
 // removes conn's [Client] from s.onlineClients and dispatches an event.
-func (s *httpServer) onClose(conn nettyws.Conn, err error) {
+func (s *wsHandler) onClose(conn nettyws.Conn, err error) {
 	client := conn.Userdata().(Client)
 
 	s.onlineClients.Disconnected(context.TODO(), client)

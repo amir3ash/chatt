@@ -23,7 +23,7 @@ func Run(watcher MessageWatcher, authz *authz.Authoriz) {
 		}
 	})
 
-	httpServer := newHttpServer(onlineUsersPresence, dispatcher)
+	httpServer := newWsHandler(onlineUsersPresence, dispatcher)
 	httpServer.RunServer()
 
 	ReadChangeStream(watcher, roomServer)
@@ -91,13 +91,13 @@ func (w *shardedWriter) run() {
 }
 
 func (*shardedWriter) write(client *Client, bytes []byte) {
-	defer func ()  {
+	defer func() {
 		err := recover()
 		if err != nil {
 			slog.Error("recovering writing", "err", err)
 		}
 	}()
-	
+
 	conn := client.Conn()
 	if conn == nil {
 		slog.Error("client's connection is nil", slog.String("userId", client.UserId()),
@@ -114,7 +114,7 @@ func (*shardedWriter) write(client *Client, bytes []byte) {
 	}
 }
 
-func (w shardedWriter) Close(){
+func (w shardedWriter) Close() {
 	for _, ch := range w.workerJobs {
 		close(ch)
 	}
