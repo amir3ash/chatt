@@ -57,6 +57,9 @@ type shardedWriter struct {
 // Creates multiple job chans and goroutins
 // to shard jobs by the hash of the client's userId.
 func newShardedWriter(num uint32) shardedWriter {
+	if num == 0 {
+		panic("number of workers is zero")
+	}
 	j := make([]chan workerJob, num)
 	for i := range j {
 		j[i] = make(chan workerJob, 1)
@@ -71,12 +74,12 @@ func newShardedWriter(num uint32) shardedWriter {
 //  1. It prevent DoS in case of slow connection (ex. full tcp queues) by sharding
 //     clients between goroutines.
 //  2. It prevents race conditions (ex. unordered messages or unexpected closed connection errors)
-func (w shardedWriter) writeTo(cli Client, msg []byte) {
+func (w *shardedWriter) writeTo(cli Client, msg []byte) {
 	index := getHash(cli.userId) % w.num
 	w.workerJobs[index] <- workerJob{cli: cli, message: msg}
 }
 
-func (w shardedWriter) run() {
+func (w *shardedWriter) run() {
 	for i := uint32(0); i < w.num; i++ {
 		go func(workerIdx uint32) {
 			jobs := w.workerJobs[workerIdx]
@@ -87,13 +90,33 @@ func (w shardedWriter) run() {
 	}
 }
 
-func (w shardedWriter) write(client *Client, bytes []byte) {
-	if err := client.Conn().Write(bytes); err != nil {
+func (*shardedWriter) write(client *Client, bytes []byte) {
+	defer func ()  {
+		err := recover()
+		if err != nil {
+			slog.Error("recovering writing", "err", err)
+		}
+	}()
+	
+	conn := client.Conn()
+	if conn == nil {
+		slog.Error("client's connection is nil", slog.String("userId", client.UserId()),
+			slog.String("clientId", client.ClientId()))
+		return
+	}
+
+	if err := conn.Write(bytes); err != nil {
 		// never here
 		slog.Error("can not write to client's connection",
 			slog.String("userId", client.UserId()),
 			slog.String("clientId", client.ClientId()),
 			"err", err)
+	}
+}
+
+func (w shardedWriter) Close(){
+	for _, ch := range w.workerJobs {
+		close(ch)
 	}
 }
 
