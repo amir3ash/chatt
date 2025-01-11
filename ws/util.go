@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 )
 
 func Run(watcher MessageWatcher, authz *authz.Authoriz) {
@@ -23,10 +24,14 @@ func Run(watcher MessageWatcher, authz *authz.Authoriz) {
 		}
 	})
 
-	httpServer := newWsHandler(onlineUsersPresence, dispatcher)
-	httpServer.RunServer()
+	go ReadChangeStream(watcher, roomServer)
 
-	ReadChangeStream(watcher, roomServer)
+	wsHandler := newWsHandler(onlineUsersPresence, dispatcher)
+	http.Handle("/ws", wsHandler)
+
+	if err := http.ListenAndServe(":7100", nil); err != nil {
+		slog.Error("http can't listen on port 7100", "err", err)
+	}
 }
 
 // Deletes item from slice then insert zero value at end (for GC).
