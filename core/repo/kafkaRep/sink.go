@@ -63,6 +63,8 @@ type MongoTransactionErr struct {
 	error
 }
 
+// MongoConnect is responsible for reading messages from Kafka
+// and write messages to MongoDB.
 type MongoConnect struct {
 	reader   *otelkafkakonsumer.Reader
 	mongoCli *mongo.Client
@@ -118,6 +120,8 @@ func (c *MongoConnect) unmarshalKafka(data []byte, v any) error {
 	return err
 }
 
+// readKafka read kafkaMessages [kafka.Message] from kafka using batching
+// and send them to [MongoConnect.msgChan].
 func (c *MongoConnect) readKafka() {
 	for {
 		var kafkaMsg kafka.Message
@@ -150,6 +154,9 @@ func (c *MongoConnect) readKafka() {
 	}
 }
 
+// reads messages [kafka.Message] from [MongoConnect.msgChan]
+// in batchSize of 50 items and timout of 100ms.
+// then it do transaction.
 func (c *MongoConnect) run() {
 	messages := make(chan []kafka.Message)
 
@@ -217,6 +224,8 @@ func (c *MongoConnect) run() {
 	}
 }
 
+// It just prepares.
+// It unmarshals messages to [repo.Message] and groups them by their TopicIds.
 func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []kafka.Message) error {
 	propagator := c.reader.TraceConfig.Propagator
 
@@ -230,7 +239,7 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 	defer span.End()
 
 	topics := make(map[string][]repo.Message)
-	for i := range msgList {
+	for i := range msgList { // group messages by their topicID
 		kafkaMsg := msgList[i]
 
 		msg := repo.Message{}
@@ -259,7 +268,15 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 	return err
 }
 
-func (c *MongoConnect) doTransaction(ctx context.Context, topicMap map[string][]repo.Message, commitPoint kafka.Message) error {
+// Executes a transaction to process and store messages in a MongoDB collection,
+// and commits a Kafka message upon successful.
+//
+// An error is returned if the transaction or Kafka message commit fails.
+func (c *MongoConnect) doTransaction(
+	ctx context.Context,
+	topicMap map[string][]repo.Message,
+	commitPoint kafka.Message,
+	) error {
 	err := c.mongoCli.UseSession(ctx, func(sc mongo.SessionContext) (err error) {
 		var merged bool
 		for topic, msgList := range topicMap {
