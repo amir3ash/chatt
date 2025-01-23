@@ -15,8 +15,6 @@ type Repository interface {
 	SendMsgToTopic(ctx context.Context, sender Sender, topicID string, message string) (Message, error)
 }
 
-type broker interface {
-	SendMessageTo(topicId string, msg *Message)
-}
+
 
 

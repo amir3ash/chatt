@@ -3,6 +3,7 @@ package api
 import (
 	"chat-system/core/messages"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -64,7 +65,7 @@ func (h *Handler) sendMessage(ctx context.Context, input *sendMessageInput) (*Re
 }
 
 func humaErr(err error) error {
-	if err == messages.ErrNotAuthorized {
+	if errors.Is(err, messages.ErrNotAuthorized{}) {
 		return huma.Error403Forbidden("not authorized")
 	}
 
