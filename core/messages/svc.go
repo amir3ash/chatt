@@ -3,8 +3,11 @@ package messages
 import (
 	"chat-system/authz"
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrEmptyTopicId = errors.New("topicId is empty")
 
 func NewService(repo Repository, auth permissionChecker) *svc {
 	return &svc{repo: repo, authz: auth}
@@ -31,6 +34,14 @@ type svc struct {
 }
 
 func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]Message, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if topicID == "" {
+		return nil, ErrEmptyTopicId
+	}
+
 	userId := authz.UserIdFromCtx(ctx)
 	can, err := s.authz.Check(ctx, userId, "read", "topic", topicID)
 	if err != nil {
@@ -46,6 +57,14 @@ func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]
 }
 
 func (s *svc) SendMessage(ctx context.Context, topicID string, message string) (Message, error) {
+	if err := ctx.Err(); err != nil {
+		return Message{}, err
+	}
+
+	if topicID == "" {
+		return Message{}, ErrEmptyTopicId
+	}
+
 	userId := authz.UserIdFromCtx(ctx)
 
 	can, err := s.authz.Check(ctx, userId, "write", "topic", topicID)
