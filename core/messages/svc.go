@@ -18,6 +18,7 @@ type Sender struct{ ID string }
 type Message struct {
 	SenderId string    `json:"senderId"`
 	ID       string    `json:"id"`
+	Version  uint      `json:"v"`
 	TopicID  string    `josn:"topicId"`
 	SentAt   time.Time `json:"sentAt"`
 	Text     string    `json:"text"`

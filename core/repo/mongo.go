@@ -43,15 +43,18 @@ type Message struct {
 	// DefaultModel adds _id, created_at and updated_at fields to the Model.
 	mgm.DefaultModel `bson:",inline"`
 	TopicID          string              `bson:"topicID" json:"topicId"`
+	Version          uint                `bson:"v" json:"v"`
 	SenderId         string              `bson:"senderID" json:"senderId"`
 	Timestamp        primitive.Timestamp `bson:"ts" json:"-"`
 	Text             string              `bson:"text" json:"text"`
+	Deleted          bool                `bson:"deleted" json:"deleted"`
 }
 
 func (m *Message) ToApiMessage() *messages.Message {
 	return &messages.Message{
 		SenderId: m.SenderId,
 		ID:       m.ID.Hex(),
+		Version:  m.Version,
 		TopicID:  m.TopicID,
 		SentAt:   m.CreatedAt,
 		Text:     m.Text,
@@ -134,6 +137,7 @@ func (r Repo) SendMsgToTopic(ctx context.Context, sender messages.Sender, topicI
 		SenderId: sender.ID,
 		Text:     message,
 		TopicID:  topicID,
+		Version:  1,
 	}
 
 	err := r.messages.CreateWithCtx(ctx, msg)
@@ -147,7 +151,7 @@ func (r Repo) SendMsgToTopic(ctx context.Context, sender messages.Sender, topicI
 		TopicID:  topicID,
 		SentAt:   msg.CreatedAt,
 		Text:     msg.Text,
-	}, nil
+	}, err
 }
 
 func (r Repo) createTopic(ctx context.Context, topicID string) error {
