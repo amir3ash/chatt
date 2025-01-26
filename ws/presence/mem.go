@@ -3,8 +3,53 @@ package presence
 import (
 	"context"
 	"iter"
+	"slices"
 	"sync"
+	"sync/atomic"
 )
+
+type deviceList[T Device] struct {
+	list []T
+	mu   sync.Mutex
+}
+
+func newDevList[T Device](devs ...T) *deviceList[T] {
+	return &deviceList[T]{devs, sync.Mutex{}}
+}
+
+func (l *deviceList[T]) insert(d T) {
+	l.mu.Lock()
+	l.list = append(l.list, d)
+	l.mu.Unlock()
+}
+
+func (l *deviceList[T]) delete(d T) (empty bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var nilDev T
+	lastIndex := len(l.list) - 1
+	clientID := d.ClientId()
+
+	for i := 0; i <= lastIndex; i++ {
+		if l.list[i].ClientId() == clientID {
+			l.list[i], l.list[lastIndex] = l.list[lastIndex], nilDev
+			l.list = l.list[:lastIndex]
+			break
+		}
+	}
+	return len(l.list) == 0
+}
+
+func (l *deviceList[T]) getUserDevices() (res []T) {
+	l.mu.Lock()
+	res = slices.Clone(l.list)
+	l.mu.Unlock()
+
+	return
+}
+
+// func (l *deviceList[T]) iterate()
 
 type Person interface {
 	UserId() string
@@ -17,31 +62,22 @@ type Device interface {
 
 type MemService[T Device] struct {
 	onlinePersons *sync.Map // map<string, []Device>
-	mu            sync.RWMutex
-	len           int
+	len           atomic.Int32
 }
 
 func NewMemService[T Device]() *MemService[T] {
-	return &MemService[T]{&sync.Map{}, sync.RWMutex{}, 0}
+	return &MemService[T]{&sync.Map{}, atomic.Int32{}}
 }
 
 // appends the device and returns nil.
 func (s *MemService[T]) Connect(ctx context.Context, dev T) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	userId := dev.UserId()
-	connections, ok := s.onlinePersons.Load(userId)
-	if ok {
-		connections = append(connections.([]T), dev)
-	} else {
-		connections = []T{dev}
+	val, exists := s.onlinePersons.LoadOrStore(userId, newDevList(dev))
+	if exists {
+		val.(*deviceList[T]).insert(dev)
 	}
 
-	s.onlinePersons.Store(userId, connections)
-
-	s.len++
-
+	s.len.Add(1)
 	return nil
 }
 
@@ -49,28 +85,18 @@ func (s *MemService[T]) Connect(ctx context.Context, dev T) error {
 func (s *MemService[T]) Disconnected(_ context.Context, dev T) error {
 	userId := dev.UserId()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	v, ok := s.onlinePersons.Load(userId)
 	if !ok {
 		return nil
 	}
-	connections := v.([]T)
 
-	connections, found := findAndDelete(connections, dev)
-	if !found {
-		return nil
-	}
+	empty := v.(*deviceList[T]).delete(dev)
 
-	if len(connections) == 0 {
+	if empty {
 		s.onlinePersons.Delete(userId)
-	} else {
-		s.onlinePersons.Store(userId, connections)
 	}
 
-	s.len--
-
+	s.len.Add(-1)
 	return nil
 }
 
@@ -82,7 +108,7 @@ func (s *MemService[T]) Disconnected(_ context.Context, dev T) error {
 func (s *MemService[T]) GetOnlineClients(_ context.Context) (iter.Seq[T], error) {
 	return func(yield func(T) bool) {
 		s.onlinePersons.Range(func(key, value any) bool {
-			clients := value.([]T)
+			clients := value.(*deviceList[T]).getUserDevices()
 			for _, c := range clients {
 				if !yield(c) {
 					return false
@@ -99,38 +125,18 @@ func (s *MemService[T]) GetClientsForUserId(user string) []T {
 	if !ok {
 		return nil
 	}
-	return v.([]T)
+	return v.(*deviceList[T]).getUserDevices()
 }
 
 func (s *MemService[T]) IsEmpty() bool {
-	s.mu.RLock()
-	empty := s.len == 0
-	s.mu.RUnlock()
+	empty := s.len.Load() == 0
 	return empty
 }
 
 func (s *MemService[T]) GetDevicesForUsers(userIds ...string) (res []T) {
-	for _, u := range userIds {
-		clients := s.GetClientsForUserId(u)
+	for i := range userIds {
+		clients := s.GetClientsForUserId(userIds[i])
 		res = append(res, clients...)
 	}
 	return
-}
-
-// Deletes item from slice then insert zero value at end (for GC).
-// Be careful, it reorders the slice
-func findAndDelete[T Device](list []T, elem T) (res []T, deleted bool) {
-	var zero T
-	lastIdx := len(list) - 1
-	clientId := elem.ClientId()
-
-	for i := range list {
-		if list[i].ClientId() == clientId {
-			list[i] = list[lastIdx]
-			list[lastIdx] = zero
-			list = list[:lastIdx]
-			return list, true
-		}
-	}
-	return list, false
 }

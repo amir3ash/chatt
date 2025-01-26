@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -35,8 +36,8 @@ func TestMemService_Connect(t *testing.T) {
 		name string
 		devs []mockDevice
 	}{
-		{"one client", []mockDevice{mockDevice{"me", "client1"}}},
-		{"two client", []mockDevice{mockDevice{"user2", "cli_21"}, mockDevice{"user2", "cli_22"}}},
+		{"one client", []mockDevice{{"me", "client1"}}},
+		{"two client", []mockDevice{{"user2", "cli_21"}, {"user2", "cli_22"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -87,10 +88,10 @@ func TestMemService_Disconnected(t *testing.T) {
 		wantErr      bool
 	}{
 		{"empty", []mockDevice{}, mockDevice{"user", "cli"}, false},
-		{"one client", []mockDevice{mockDevice{"user", "cli"}}, mockDevice{"user", "cli"}, false},
+		{"one client", []mockDevice{{"user", "cli"}}, mockDevice{"user", "cli"}, false},
 		{"three client", []mockDevice{
-			mockDevice{"u2", "c_21"}, mockDevice{"u2", "c_22"}, mockDevice{"u2", "c_23"},
-			mockDevice{"other", "oCli"},
+			{"u2", "c_21"}, {"u2", "c_22"}, {"u2", "c_23"},
+			{"other", "oCli"},
 		}, mockDevice{"u2", "c_22"}, false},
 	}
 
@@ -172,9 +173,9 @@ func TestMemService_GetDevicesForUsers(t *testing.T) {
 		expectedClients []string
 	}{
 		{"empty", nil, nil, nil},
-		{"all devs", []mockDevice{mockDevice{"u1", "cli_11"}, mockDevice{"u2", "cli_22"}},
+		{"all devs", []mockDevice{{"u1", "cli_11"}, {"u2", "cli_22"}},
 			[]string{"u1", "u2"}, []string{"cli_11", "cli_22"}},
-		{"all devs", []mockDevice{mockDevice{"u1", "cli_11"}, mockDevice{"u1", "cli_12"}, mockDevice{"u2", "cli_22"}},
+		{"all devs", []mockDevice{{"u1", "cli_11"}, {"u1", "cli_12"}, {"u2", "cli_22"}},
 			[]string{"u1"}, []string{"cli_11", "cli_12"}},
 	}
 
@@ -228,8 +229,8 @@ func TestMemService_IsEmpty(t *testing.T) {
 				}
 				wg.Wait()
 
-				if s.len != tt.connectedDevs {
-					t.Errorf("memService.len is %d, expected: %d", s.len, tt.connectedDevs)
+				if int(s.len.Load()) != tt.connectedDevs {
+					t.Errorf("memService.len is %d, expected: %d", s.len.Load(), tt.connectedDevs)
 				}
 			})
 		}
@@ -255,8 +256,8 @@ func TestMemService_IsEmpty(t *testing.T) {
 				}
 				wg.Wait()
 
-				if s.len != 0 {
-					t.Errorf("memService.len is %d, expected: %d", s.len, tt.connectedDevs)
+				if s.len.Load() != 0 {
+					t.Errorf("memService.len is %d, expected: %d", s.len.Load(), tt.connectedDevs)
 				}
 
 				if s.IsEmpty() != tt.expected {
@@ -265,4 +266,91 @@ func TestMemService_IsEmpty(t *testing.T) {
 			})
 		}
 	}
+}
+
+func BenchmarkConnectSameUser(b *testing.B) {
+	ctx := context.Background()
+	s := NewMemService[mockDevice]()
+	b.SetParallelism(400)
+	i := atomic.Uint32{}
+
+	b.RunParallel(func(p *testing.PB) {
+		for p.Next() {
+			clientId := fmt.Sprint(i.Load())
+			err := s.Connect(ctx, mockDevice{userId: "user", clientId: clientId})
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		i.Add(1)
+	})
+}
+
+func BenchmarkConnectDiffrentUsers(b *testing.B) {
+	ctx := context.Background()
+	s := NewMemService[mockDevice]()
+	b.SetParallelism(400)
+	i := atomic.Uint32{}
+
+	b.RunParallel(func(p *testing.PB) {
+		for p.Next() {
+			userId := fmt.Sprint(i.Load())
+			err := s.Connect(ctx, mockDevice{userId: userId, clientId: "cli"})
+			if err != nil {
+				b.Fatal(err)
+			}
+			i.Add(1)
+		}
+	})
+}
+
+func BenchmarkMultipleOperations(b *testing.B) {
+	ctx := context.Background()
+	s := NewMemService[mockDevice]()
+	b.SetParallelism(400)
+	i := atomic.Uint32{}
+
+	b.RunParallel(func(p *testing.PB) {
+		for p.Next() {
+			userId := fmt.Sprint(i.Load())
+			dev := mockDevice{userId: userId, clientId: "cli"}
+			err := s.Connect(ctx, dev)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			i.Add(1)
+
+			err = s.Disconnected(ctx, dev)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			s.GetOnlineClients(ctx)
+		}
+	})
+}
+
+func BenchmarkGetOnlineClients(b *testing.B) {
+	ctx := context.Background()
+	s := NewMemService[mockDevice]()
+
+	for i := range 1000 {
+		uId := fmt.Sprint(i + 1)
+		for j := range 4 {
+			s.Connect(ctx, mockDevice{userId: uId, clientId: fmt.Sprint(j * i)})
+		}
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(p *testing.PB) {
+		for p.Next() {
+			devices, _ := s.GetOnlineClients(ctx)
+			for a := range devices {
+				if a.userId == a.UserId() {
+					continue
+				}
+			}
+		}
+	})
 }
