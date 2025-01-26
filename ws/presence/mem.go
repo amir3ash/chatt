@@ -49,7 +49,19 @@ func (l *deviceList[T]) getUserDevices() (res []T) {
 	return
 }
 
-// func (l *deviceList[T]) iterate()
+
+// A util func for testing existance of device.
+func (l *deviceList[T]) deviceExists(dev T) bool {
+	cId := dev.ClientId()
+
+	for _, c := range l.list {
+		if c.ClientId() == cId{
+			return c.UserId() == dev.UserId()
+		}	
+	}
+
+	return false
+}
 
 type Person interface {
 	UserId() string
@@ -118,6 +130,16 @@ func (s *MemService[T]) GetOnlineClients(_ context.Context) (iter.Seq[T], error)
 			return true
 		})
 	}, nil
+}
+
+// A util func for testing
+func (s *MemService[T]) deviceExists(dev T) bool {
+	val, ok := s.onlinePersons.Load(dev.UserId())
+	if !ok {
+		return false
+	}
+	
+	return val.(*deviceList[T]).deviceExists(dev)
 }
 
 func (s *MemService[T]) GetClientsForUserId(user string) []T {

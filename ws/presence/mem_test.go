@@ -49,33 +49,12 @@ func TestMemService_Connect(t *testing.T) {
 					t.Errorf("MemService.Connect() error = %v", err)
 				}
 
-				if !deviceExits(t, s, device) {
+				if !s.deviceExists(device) {
 					t.Errorf("MemService does store device with specific clientId, wantsClientId = %v", device.ClientId())
-
 				}
 			}
 		})
 	}
-}
-
-func deviceExits[T Device](t *testing.T, s *MemService[T], dev T) bool {
-	t.Helper()
-
-	// load devices for ther user with his userId
-	valuse, exists := s.onlinePersons.Load(dev.UserId())
-	if !exists {
-		return false
-	}
-
-	devices, ok := valuse.([]T)
-	if !ok {
-		t.Errorf("MemService.onlinePersons not stores Device[], values: %+v", valuse)
-	}
-
-	return slices.ContainsFunc(devices, func(d T) bool {
-		return d.ClientId() == dev.ClientId() &&
-			d.UserId() == dev.UserId()
-	})
 }
 
 func TestMemService_Disconnected(t *testing.T) {
@@ -108,7 +87,7 @@ func TestMemService_Disconnected(t *testing.T) {
 				t.Errorf("MemService.Disconnected() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
-			if deviceExits(t, s, tt.disconnected) {
+			if s.deviceExists(tt.disconnected) {
 				t.Errorf("device must be deleted but exists")
 			}
 
@@ -117,7 +96,7 @@ func TestMemService_Disconnected(t *testing.T) {
 					continue
 				}
 
-				if !deviceExits(t, s, dev) {
+				if !s.deviceExists(dev) {
 					t.Errorf("other devices must be present")
 				}
 			}
