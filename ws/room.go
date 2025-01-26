@@ -198,8 +198,6 @@ var _ presence.Device = Client{}
 type room struct {
 	ID               string
 	onlinePersons    *presence.MemService[Client]
-	destroyObservers []func(roomId string)
-	mu               sync.RWMutex
 }
 
 func newRoom(id string, connections []Client) *room {
@@ -211,7 +209,7 @@ func newRoom(id string, connections []Client) *room {
 		persons.Connect(ctx, c)
 	}
 
-	return &room{id, persons, make([]func(string), 0), sync.RWMutex{}}
+	return &room{id, persons}
 }
 
 // adds the [Client] c to online users of the [room] r.
