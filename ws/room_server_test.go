@@ -38,13 +38,13 @@ func TestRoomServer_joinClientToRoom(t *testing.T) {
 	room := r.getRoom("roomId")
 	cli := Client{"cID", "uID", nil}
 
-	r.joinClientToRoom(cli, room)
+	r.joinClientToRooms(cli, room)
 
 	if !roomContainsClient(room, cli) {
 		t.Error("it should add client to the room")
 	}
 
-	if r.clientsRooms[cli.ClientId()][0] != "roomId" {
+	if r.clientsRooms.cloneValues(cli.ClientId())[0].ID != "roomId" {
 		t.Errorf("it should remember websocket rooms for every client, clientRooms: %v", r.clientsRooms)
 	}
 }
@@ -55,7 +55,7 @@ func TestRoomServer_leaveClientFromRoom(t *testing.T) {
 	room := r.getRoom("roomId")
 	client := Client{"cID", "uID", nil}
 
-	r.joinClientToRoom(client, room)
+	r.joinClientToRooms(client, room)
 
 	if !roomContainsClient(room, client) {
 		t.Error("joinClientToRoom should add the client to the room")
@@ -67,7 +67,7 @@ func TestRoomServer_leaveClientFromRoom(t *testing.T) {
 		t.Error("it should remove client from the room")
 	}
 
-	if len(r.clientsRooms[client.ClientId()]) > 0 {
+	if len(r.clientsRooms.cloneValues(client.ClientId())) > 0 {
 		t.Errorf("it should remove websocket room for the client")
 	}
 }
@@ -132,11 +132,10 @@ func TestRoomServer_onClientDisconnected(t *testing.T) {
 	rooms[0].addClient(other_client) // room "room1" has two clients
 	r.onClientConnected(cli)
 
-	clientRooms := r.clientsRooms[cli.ClientId()]
-	slices.Sort(clientRooms)
+	clientRooms := r.clientsRooms.cloneValues(cli.ClientId())
 
-	if !slices.Equal(clientRooms, []string{"room1", "room2", "room3"}) {
-		t.Errorf("clients must connected to authorized rooms, clientRooms: %v", r.clientsRooms[cli.ClientId()])
+	if !slices.Equal(clientRooms, rooms) {
+		t.Errorf("clients must connected to authorized rooms, clientRooms: %v", clientRooms)
 		return
 	}
 

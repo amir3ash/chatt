@@ -5,6 +5,7 @@ import (
 	"chat-system/core/messages"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"testing"
@@ -125,4 +126,23 @@ func TestSendMessageWithError(t *testing.T) {
 	msg := messages.Message{ID: "msgId"}
 
 	room.SendMessage(&msg)
+}	
+
+func Benchmark(b *testing.B) {
+	s := NewRoomServer(mockDeviceGetter{}, mockAuthorizedTopics{})
+	for i := range 10000 {
+		s.createRoom(fmt.Sprint(i))
+	}
+	b.ResetTimer()
+	b.SetParallelism(30_000)
+
+	b.RunParallel(func(p *testing.PB) {
+		i := rand.Int64N(1000000)
+		for p.Next() {
+			cId := fmt.Sprint(i)
+			s.onClientConnected(Client{cId, cId, nil})
+			i++
+			i = i % 5000
+		}
+	})
 }

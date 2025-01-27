@@ -38,55 +38,32 @@ type roomServer struct {
 	onlinePersons devicesGetter[Client]
 	authz         whoCanReadTopic
 	rooms         map[string]*room
-	clientsRooms  map[string][]string // clientId -> []roomId. rooms which the user connected to.
-	clientsMutex  sync.RWMutex
+	clientsRooms  *mapList[string, *room] // clientId -> []*room. rooms which the user connected to.
 	sync.RWMutex
 }
 
 func NewRoomServer(b devicesGetter[Client], authz whoCanReadTopic) *roomServer {
 	server := roomServer{
-		b, authz, make(map[string]*room), make(map[string][]string),
-		sync.RWMutex{}, sync.RWMutex{},
+		b, authz, make(map[string]*room), &mapList[string, *room]{},
+		sync.RWMutex{},
 	}
 	return &server
 }
 
 // Adds client to room and remembers rooms which the client connected to.
-func (r *roomServer) joinClientToRoom(c Client, room *room) {
-	r.clientsMutex.Lock()
-	defer r.clientsMutex.Unlock()
-
-	rooms, ok := r.clientsRooms[c.ClientId()]
-	if ok {
-		rooms = append(rooms, room.ID)
-	} else {
-		rooms = []string{room.ID}
+func (r *roomServer) joinClientToRooms(c Client, rooms ...*room) {
+	for _, room := range rooms {
+		r.clientsRooms.insert(c.ClientId(), room)
+		room.addClient(c)
 	}
-
-	r.clientsRooms[c.ClientId()] = rooms
-
-	room.addClient(c)
 }
 
 // Removes client from room and remove the room from user's websocket rooms.
-func (r *roomServer) leaveClientFromRoom(c Client, room *room) {
-	r.clientsMutex.Lock()
-	defer r.clientsMutex.Unlock()
-
-	rooms, ok := r.clientsRooms[c.ClientId()]
-	if !ok {
-		return
+func (r *roomServer) leaveClientFromRoom(c Client, rooms ...*room) {
+	for _, room := range rooms {
+		r.clientsRooms.deleteValue(c.ClientId(), room)
+		room.removeClient(c)
 	}
-
-	rooms = findAndDelete(rooms, room.ID)
-
-	if len(rooms) == 0 {
-		delete(r.clientsRooms, c.ClientId())
-	} else {
-		r.clientsRooms[c.ClientId()] = rooms
-	}
-
-	room.removeClient(c)
 }
 
 // onClientConnected gets authorzided topics
@@ -97,7 +74,6 @@ func (r *roomServer) onClientConnected(c Client) {
 	for roomId := range r.rooms {
 		serverTopics = append(serverTopics, roomId)
 	}
-	slog.Debug("OnConnect in roomserver", "rooms", r.rooms)
 
 	topics, err := r.authz.TopicsWhichUserCanWatch(c.UserId(), serverTopics)
 	if err != nil {
@@ -105,34 +81,26 @@ func (r *roomServer) onClientConnected(c Client) {
 		return
 	}
 
-	for _, topicId := range topics {
-		room := r.rooms[topicId]
-		r.joinClientToRoom(c, room)
+	rooms := make([]*room, 0, 1)
+	for _, topic := range topics {
+		rooms = append(rooms, r.rooms[topic])
 	}
+
+	r.joinClientToRooms(c, rooms...)
 }
 
 // onClientDisconnected remove [Client] c from rooms which connected before.
 // then deletes rooms with zero clients.
 func (r *roomServer) onClientDisconnected(c Client) {
-	r.clientsMutex.RLock()
-	rooms := slices.Clone(r.clientsRooms[c.ClientId()])
-	r.clientsMutex.RUnlock()
+	rooms := r.clientsRooms.cloneValues(c.ClientId())
+	r.leaveClientFromRoom(c, rooms...)
 
 	r.Lock()
 	defer r.Unlock()
 
-	for _, roomId := range rooms {
-		room, ok := r.rooms[roomId]
-		if !ok {
-			slog.Warn("client's rooms is not synchronized with rooms",
-				slog.String("clientId", c.ClientId()), slog.String("roomId", roomId))
-			continue
-		}
-
-		r.leaveClientFromRoom(c, room)
-
+	for _, room := range rooms {
 		if room.IsEmpty() {
-			delete(r.rooms, roomId)
+			delete(r.rooms, room.ID)
 		}
 	}
 }
@@ -196,8 +164,8 @@ var _ presence.Device = Client{}
 
 // room contains online clients for a particular topic.
 type room struct {
-	ID               string
-	onlinePersons    *presence.MemService[Client]
+	ID            string
+	onlinePersons *presence.MemService[Client]
 }
 
 func newRoom(id string, connections []Client) *room {
@@ -241,4 +209,69 @@ func (r *room) SendMessage(m *messages.Message) { // maybe message will be incon
 	for client := range clients {
 		workerIns.writeTo(client, bytes)
 	}
+}
+
+// simple safe listContainer
+type listContainer[T comparable] struct {
+	list []T
+	mu sync.Mutex
+}
+// used in [roomServer]
+type mapList[K, V comparable] struct {
+	m sync.Map ///map[K]*listContainer[V]
+}
+
+func (ml *mapList[K, V]) insert(key K, val V) {
+	c, _ := ml.m.LoadOrStore(key, &listContainer[V]{})
+	container := c.(*listContainer[V])
+
+	container.mu.Lock()
+	container.list = append(container.list, val)
+	container.mu.Unlock()
+}
+
+func (ml *mapList[K, V]) deleteValue(key K, val V) {
+	c, ok := ml.m.Load(key)
+	if !ok {
+		return
+	}
+
+	container := c.(*listContainer[V])
+	
+	container.mu.Lock()
+
+	list := container.list
+	lastIndex := len(list) - 1
+	var nilVal V
+
+	for i := 0; i <= lastIndex; i++ {
+		if list[i] == val {
+			list[i], list[lastIndex] = list[lastIndex], nilVal
+			list = list[:lastIndex]
+			break
+		}
+	}
+
+	if len(list) == 0 {
+		ml.m.Delete(key)
+	} else {
+		container.list = list
+	}
+
+	container.mu.Unlock()
+}
+
+func (ml *mapList[K, V]) cloneValues(key K) (values []V) {
+	c, ok  := ml.m.Load(key)
+	if !ok {
+		return nil
+	}
+
+	container := c.(*listContainer[V])
+	
+	container.mu.Lock()
+	values = slices.Clone(container.list)
+	container.mu.Unlock()
+
+	return
 }
