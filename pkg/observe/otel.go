@@ -4,16 +4,17 @@ import (
 	"chat-system/version"
 	"context"
 	"errors"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/log/global"
-
-	// "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -101,11 +102,11 @@ func SetupOTelSDK(ctx context.Context, opts *options) (shutdown func(context.Con
 }
 
 func newPropagator() propagation.TextMapPropagator {
-	// return propagation.NewCompositeTextMapPropagator(
-	// 	propagation.TraceContext{},
-	// 	propagation.Baggage{},
-	// )
-	return propagation.TraceContext{}
+	return propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	)
+	// return propagation.TraceContext{}
 }
 
 func (opts *options) EnableTraceProvider() *options {
@@ -119,10 +120,17 @@ func (opts *options) EnableTraceProvider() *options {
 		return opts
 	}
 
-	bsp := trace.NewBatchSpanProcessor(traceExporter, trace.WithBlocking())
+	if _, ok := os.LookupEnv("OTEL_BSP_SCHEDULE_DELAY"); !ok {
+		os.Setenv("OTEL_BSP_SCHEDULE_DELAY", "3000") // ms
+	}
+
+	bsp := trace.NewBatchSpanProcessor(traceExporter,
+		trace.WithBlocking(),
+		trace.WithMaxQueueSize(4096),
+	)
 
 	traceProvider := trace.NewTracerProvider(
-		trace.WithSampler(trace.AlwaysSample()),
+		trace.WithSampler(trace.TraceIDRatioBased(0.6)),
 		trace.WithSpanProcessor(bsp),
 		trace.WithResource(opts.resource),
 	)
@@ -160,10 +168,18 @@ func (opts *options) EnableLoggerProvider() *options {
 		return opts
 	}
 
+	if _, ok := os.LookupEnv("OTEL_BLRP_SCHEDULE_DELAY"); !ok {
+		os.Setenv("OTEL_BLRP_SCHEDULE_DELAY", "1000") // ms
+	}
+
+	blrp := log.NewBatchProcessor(logExporter)
+
 	loggerProvider := log.NewLoggerProvider(
-		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+		log.WithProcessor(blrp),
 		log.WithResource(opts.resource),
 	)
+
+	slog.SetDefault(otelslog.NewLogger(""))
 
 	opts.loggerProvider = loggerProvider
 	return opts
