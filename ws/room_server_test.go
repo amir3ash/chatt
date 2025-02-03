@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"testing"
@@ -134,8 +135,8 @@ func TestRoomServer_onClientDisconnected(t *testing.T) {
 
 	clientRooms := r.clientsRooms.cloneValues(cli.ClientId())
 
-	if !slices.Equal(clientRooms, rooms) {
-		t.Errorf("clients must connected to authorized rooms, clientRooms: %v", clientRooms)
+	if !areRoomSlicesSame(t, clientRooms, rooms) {
+		t.Errorf("clients must connected to authorized rooms, clientRooms: %v, expected: %v", clientRooms, rooms)
 		return
 	}
 
@@ -159,4 +160,25 @@ func TestRoomServer_onClientDisconnected(t *testing.T) {
 	if _, found := r.rooms["room1"]; !found {
 		t.Errorf("it should not remove none empty rooms")
 	}
+}
+
+func areRoomSlicesSame(t *testing.T, rooms1, rooms2 []*room) bool {
+	t.Helper()
+
+	if len(rooms1) != len(rooms2) {
+		return false
+	}
+
+	a1 := slices.Clone(rooms1)
+	a2 := slices.Clone(rooms2)
+	f := func(r1, r2 *room) int { return cmp.Compare(r1.ID, r2.ID) }
+	slices.SortStableFunc(a1, f)
+	slices.SortStableFunc(a2, f)
+
+	for i := range len(a1) {
+		if a1[i] != a2[i] {
+			return false
+		}
+	}
+	return true
 }
