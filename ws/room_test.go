@@ -3,6 +3,7 @@ package ws
 import (
 	"bytes"
 	"chat-system/core/messages"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -109,9 +110,9 @@ func Test_SendMessage_writingToConn(t *testing.T) {
 	room := newRoom("room_id", []Client{cli})
 	msg := messages.Message{ID: "msgId"}
 
-	room.SendMessage(&msg)
+	room.SendMessage(context.Background(), &msg)
 
-	expected, _ := json.Marshal(msg)
+	expected, _ := json.Marshal(&msg)
 	gotBytes := conn.getReceived()
 
 	if !bytes.Equal(expected, gotBytes) {
@@ -125,7 +126,7 @@ func TestSendMessageWithError(t *testing.T) {
 	room := newRoom("room_id", []Client{cli})
 	msg := messages.Message{ID: "msgId"}
 
-	room.SendMessage(&msg)
+	room.SendMessage(context.Background(), &msg)
 }	
 
 func Benchmark(b *testing.B) {

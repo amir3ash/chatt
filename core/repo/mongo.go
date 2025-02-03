@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type MongoConf struct {
@@ -355,8 +356,9 @@ func (r Repo) readFromBucket(ctx context.Context, topicID string, pg messages.Pa
 
 type ChangeStream struct {
 	DocumentKey   string
-	OperationType string            // insert or delete
-	Msg           *messages.Message // will be nil for "delete" operation type
+	OperationType string                     // insert or delete
+	Msg           *messages.Message          // will be nil for "delete" operation type
+	Carrier       propagation.TextMapCarrier // can be used for tracing
 }
 
 func (r Repo) watchMessagesChangeStream(ctx context.Context, msgChan chan<- *ChangeStream) {

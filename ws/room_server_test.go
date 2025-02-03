@@ -140,8 +140,11 @@ func TestRoomServer_onClientDisconnected(t *testing.T) {
 		return
 	}
 
-	r.onClientDisconnected(cli)
-
+	err := r.onClientDisconnected(cli)
+	if err != nil {
+		t.Fatalf("onClientDisconnected returns error: %v", err)
+	}
+	
 	for _, room := range rooms {
 		if roomContainsClient(room, cli) {
 			t.Errorf("room server should remove client from his rooms, roomId: %s", room.ID)
