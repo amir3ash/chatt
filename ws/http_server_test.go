@@ -96,7 +96,7 @@ func toWsSchema(url string) string {
 func TestHttpServer_onConnect(t *testing.T) {
 	presence := presence.NewMemService[Client]()
 	dispatcher := NewRoomDispatcher()
-	httpServer := newHttpServer(presence, dispatcher)
+	wsHandler := newWsHandler(presence, dispatcher)
 
 	cli := Client{"clientId", "userId", &errorHandledConn{}}
 
@@ -109,7 +109,7 @@ func TestHttpServer_onConnect(t *testing.T) {
 		clientEvCalled <- true
 	})
 
-	httpServer.onConnect(mockNettyConn{userData: cli})
+	wsHandler.onConnect(mockNettyConn{userData: cli})
 
 	devices := presence.GetDevicesForUsers(cli.UserId())
 	assert.Len(t, devices, 1)
@@ -119,10 +119,10 @@ func TestHttpServer_onConnect(t *testing.T) {
 }
 
 func TestHttpServer_OnClose_called(t *testing.T) {
-	httpServer := newHttpServer(presence.NewMemService[Client](), NewRoomDispatcher())
+	wsHandler := newWsHandler(presence.NewMemService[Client](), NewRoomDispatcher())
 
 	onClosedCalled := make(chan bool, 1)
-	httpServer.websocket.OnClose = func(conn nettyws.Conn, err error) {
+	wsHandler.websocket.OnClose = func(conn nettyws.Conn, err error) {
 		_, ok := conn.Userdata().(Client)
 		assert.True(t, ok, "connection's userdata must be Client")
 
@@ -131,7 +131,7 @@ func TestHttpServer_OnClose_called(t *testing.T) {
 		onClosedCalled <- true
 	}
 
-	server := httptest.NewServer(httpServer)
+	server := httptest.NewServer(wsHandler)
 	defer server.Close()
 
 	ws := nettyws.NewWebsocket()
@@ -148,11 +148,11 @@ func TestHttpServer_OnClose_called(t *testing.T) {
 func TestHttpServer_OnClose(t *testing.T) {
 	presence := presence.NewMemService[Client]()
 	dispatcher := NewRoomDispatcher()
-	httpServer := newHttpServer(presence, dispatcher)
+	wsHandler := newWsHandler(presence, dispatcher)
 
 	cli := Client{"cId", "uId", &errorHandledConn{}}
 	conn := mockNettyConn{userData: cli}
-	httpServer.onConnect(conn)
+	wsHandler.onConnect(conn)
 
 	devices := presence.GetDevicesForUsers(cli.UserId())
 	assert.Len(t, devices, 1)
@@ -167,7 +167,7 @@ func TestHttpServer_OnClose(t *testing.T) {
 		clientEvCalled <- true
 	})
 
-	httpServer.websocket.OnClose(conn, fmt.Errorf("mock error"))
+	wsHandler.websocket.OnClose(conn, fmt.Errorf("mock error"))
 
 	devices = presence.GetDevicesForUsers(cli.UserId())
 	assert.Len(t, devices, 0, "when disconnected, the client must be removed from online clients")
@@ -178,7 +178,7 @@ func TestHttpServer_OnClose(t *testing.T) {
 func TestHttpServer_closeClient(t *testing.T) {
 	presence := presence.NewMemService[Client]()
 	dispatcher := NewRoomDispatcher()
-	httpServer := newHttpServer(presence, dispatcher)
+	wsHandler := newWsHandler(presence, dispatcher)
 
 	cli := &Client{"cliId", "userId", nil}
 	conn := &mockNettyConn{userData: *cli}
@@ -189,7 +189,7 @@ func TestHttpServer_closeClient(t *testing.T) {
 
 	conn.On("Close").Return(nil)
 
-	httpServer.onConnect(conn)
+	wsHandler.onConnect(conn)
 
 	if presence.IsEmpty() {
 		t.Error("client must be added to presence instance")
@@ -202,7 +202,7 @@ func TestHttpServer_closeClient(t *testing.T) {
 	})
 	mockDispatch.On("mockSub", clientDisconnected).Once()
 
-	httpServer.closeClient(*cli, InternalError)
+	wsHandler.closeClient(*cli, InternalError)
 
 	if !presence.IsEmpty() {
 		t.Error("closeClient should delete client from presence service")
@@ -217,4 +217,4 @@ func TestHttpServer_closeClient(t *testing.T) {
 	}
 }
 
-var _ http.Handler = httpServer{}
+var _ http.Handler = wsHandler{}

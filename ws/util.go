@@ -3,10 +3,14 @@ package ws
 import (
 	"chat-system/authz"
 	"chat-system/ws/presence"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 )
+
+var HttpServer *http.Server
 
 func Run(watcher MessageWatcher, authz *authz.Authoriz) {
 	onlineUsersPresence := presence.NewMemService[Client]()
@@ -15,18 +19,42 @@ func Run(watcher MessageWatcher, authz *authz.Authoriz) {
 
 	dispatcher := NewRoomDispatcher()
 
+	var wsHandler wsHandler
+
 	dispatcher.SubscribeOnClientEvents(func(e clientEvent) {
 		if e.EventType() == clientConnected {
-			roomServer.onClientConnected(e.client)
+			err := roomServer.onClientConnected(e.client)
+			if err != nil {
+				slog.Error("onClientConneted fails", slog.String("clientId", e.client.ClientId()), "err", err)
+				wsHandler.closeClient(e.client, InternalError)
+			}
 		} else {
-			roomServer.onClientDisconnected(e.client)
+			err := roomServer.onClientDisconnected(e.client)
+			if err != nil {
+				slog.Error("onClientDisconneted fails", slog.String("clientId", e.client.ClientId()), "err", err)
+			}
 		}
 	})
 
-	httpServer := newHttpServer(onlineUsersPresence, dispatcher)
-	httpServer.RunServer()
+	go ReadChangeStream(watcher, roomServer)
 
-	ReadChangeStream(watcher, roomServer)
+	// TODO add allowed origins to prevent CSRF
+	wsHandler = newWsHandler(onlineUsersPresence, dispatcher)
+	handler := wsHandler.setupHttpMiddlewares()
+
+	http.Handle("/ws", handler)
+
+	HttpServer = &http.Server{Addr: ":7100"}
+	HttpServer.RegisterOnShutdown(func() {
+		err := wsHandler.shutdown()
+		if err != nil {
+			slog.Error("can not shutdown websocket", "err", err)
+		}
+	})
+
+	if err := HttpServer.ListenAndServe(); err != nil {
+		slog.Error("http can't listen on port 7100", "err", err)
+	}
 }
 
 // Deletes item from slice then insert zero value at end (for GC).
@@ -57,9 +85,13 @@ type shardedWriter struct {
 // Creates multiple job chans and goroutins
 // to shard jobs by the hash of the client's userId.
 func newShardedWriter(num uint32) shardedWriter {
+	if num == 0 {
+		panic(fmt.Errorf("can not create new shardedWriter with zero workers"))
+	}
+
 	j := make([]chan workerJob, num)
 	for i := range j {
-		j[i] = make(chan workerJob, 1)
+		j[i] = make(chan workerJob, 30)
 	}
 
 	return shardedWriter{num: num, workerJobs: j}
@@ -88,7 +120,13 @@ func (w shardedWriter) run() {
 }
 
 func (w shardedWriter) write(client *Client, bytes []byte) {
-	if err := client.Conn().Write(bytes); err != nil {
+	conn := client.Conn()
+	if conn == nil {
+		slog.Error("client's connection is nil")
+		return
+	}
+
+	if err := conn.Write(bytes); err != nil {
 		// never here
 		slog.Error("can not write to client's connection",
 			slog.String("userId", client.UserId()),

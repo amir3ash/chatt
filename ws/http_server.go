@@ -5,7 +5,6 @@ import (
 	"chat-system/ws/presence"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -30,26 +29,24 @@ func (c *errorHandledConn) onError(f func(error)) {
 	c.onErr = f
 }
 
-// httpServer manages all online clients and upgrading http requests to websocket.
-type httpServer struct {
+// wsHandler manages all online clients and upgrading http requests to websocket.
+type wsHandler struct {
 	onlineClients *presence.MemService[Client]
 	dispatcher    *roomDispatcher
 	websocket     *nettyws.Websocket
-	ch            chan *errorHandledConn
 	getUserId     func(http.Header) string // gets userId from [http.Header]
 }
 
-func newHttpServer(presence *presence.MemService[Client], dispatcher *roomDispatcher) httpServer {
+func newWsHandler(presence *presence.MemService[Client], dispatcher *roomDispatcher) wsHandler {
 	wsh := nettyws.NewWebsocket(
 		nettyws.WithAsyncWrite(512, false),
 		// nettyws.WithBufferSize(2048, 2048),
 		nettyws.WithNoDelay(true),
 	)
-	s := httpServer{
+	s := wsHandler{
 		presence,
 		dispatcher,
 		wsh,
-		make(chan *errorHandledConn, 15),
 		authz.UserIdFromCookieHeader,
 	}
 
@@ -58,27 +55,14 @@ func newHttpServer(presence *presence.MemService[Client], dispatcher *roomDispat
 	return s
 }
 
-// listens on port 7100 and handles websockets on "/ws" path.
-func (s httpServer) RunServer() {
-	// TODO add allowed origins to prevent CSRF
-	go func() {
-		fmt.Println("listen on ws://:7100")
-
-		if err := http.ListenAndServe(":7100", s.setupHandler()); err != nil {
-			slog.Error("http can't listen on port 7100", "err", err)
-		}
-	}()
-}
-
-func (s httpServer) setupHandler() http.Handler {
+func (s wsHandler) setupHttpMiddlewares() http.Handler {
 	handler := authz.NewHttpAuthMiddleware(s)
-	// http.Handle("/ws", handler)
 
 	return handler
 }
 
 // implements [http.Handler] to upgrade requests to websocket.
-func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, err := s.websocket.UpgradeHTTP(w, r)
 	if err != nil {
 		if errors.Is(err, nettyws.ErrServerClosed) {
@@ -90,7 +74,7 @@ func (s httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *httpServer) setupWsHandler() {
+func (s *wsHandler) setupWsHandler() {
 	s.websocket.OnOpen = func(conn nettyws.Conn) {
 		userId := s.getUserId(conn.Header())
 
@@ -113,7 +97,7 @@ func (s *httpServer) setupWsHandler() {
 }
 
 // adds conn's [Client] to s.onlineClients and dispatches an event.
-func (s *httpServer) onConnect(conn nettyws.Conn) {
+func (s *wsHandler) onConnect(conn nettyws.Conn) {
 	client := conn.Userdata().(Client)
 
 	s.onlineClients.Connect(context.TODO(), client)
@@ -121,7 +105,7 @@ func (s *httpServer) onConnect(conn nettyws.Conn) {
 }
 
 // removes conn's [Client] from s.onlineClients and dispatches an event.
-func (s *httpServer) onClose(conn nettyws.Conn, err error) {
+func (s *wsHandler) onClose(conn nettyws.Conn, err error) {
 	client := conn.Userdata().(Client)
 
 	s.onlineClients.Disconnected(context.TODO(), client)
@@ -132,7 +116,7 @@ func (s *httpServer) onClose(conn nettyws.Conn, err error) {
 
 // closeClient disconnect the client from server
 // and writes websocket close frame with code and reason.
-func (s *httpServer) closeClient(client Client, code WsCode) {
+func (s *wsHandler) closeClient(client Client, code WsCode) {
 	conn, ok := client.Conn().(*errorHandledConn).conn.(nettyws.Conn)
 	if !ok {
 		slog.Error("can not cast client's conn top nettyws.Conn", "conn", conn)
@@ -150,7 +134,7 @@ func (s *httpServer) closeClient(client Client, code WsCode) {
 	s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
 }
 
-func (s *httpServer) shutdown() error {
+func (s *wsHandler) shutdown() error {
 	return s.websocket.Close()
 }
 
