@@ -12,15 +12,23 @@ import (
 
 	nettyws "github.com/go-netty/go-netty-ws"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 type mockNettyConn struct {
+	mock.Mock
 	userData any
+}
+
+// Request implements nettyws.Conn.
+func (m mockNettyConn) Request() *http.Request {
+	panic("unimplemented")
 }
 
 // Close implements nettyws.Conn.
 func (m mockNettyConn) Close() error {
-	panic("unimplemented")
+	args := m.Called()
+	return args.Error(0)
 }
 
 // Context implements nettyws.Conn.
@@ -75,7 +83,8 @@ func (m mockNettyConn) Write(message []byte) error {
 
 // WriteClose implements nettyws.Conn.
 func (m mockNettyConn) WriteClose(code int, reason string) error {
-	panic("unimplemented")
+	args := m.Called(code, reason)
+	return args.Error(0)
 }
 
 var _ nettyws.Conn = mockNettyConn{}
@@ -164,6 +173,48 @@ func TestHttpServer_OnClose(t *testing.T) {
 	assert.Len(t, devices, 0, "when disconnected, the client must be removed from online clients")
 
 	assert.True(t, <-clientEvCalled, "event subscriber must be called")
+}
+
+func TestHttpServer_closeClient(t *testing.T) {
+	presence := presence.NewMemService[Client]()
+	dispatcher := NewRoomDispatcher()
+	httpServer := newHttpServer(presence, dispatcher)
+
+	cli := &Client{"cliId", "userId", nil}
+	conn := &mockNettyConn{userData: *cli}
+	cli.conn = &errorHandledConn{conn: conn}
+
+	conn.On("WriteClose", int(InternalError), InternalError.GetCloseReason()).
+		Return(fmt.Errorf("mockErr"))
+
+	conn.On("Close").Return(nil)
+
+	httpServer.onConnect(conn)
+
+	if presence.IsEmpty() {
+		t.Error("client must be added to presence instance")
+		return
+	}
+
+	mockDispatch := mock.Mock{}
+	dispatcher.SubscribeOnClientEvents(func(e clientEvent) {
+		mockDispatch.MethodCalled("mockSub", e.EventType())
+	})
+	mockDispatch.On("mockSub", clientDisconnected).Once()
+
+	httpServer.closeClient(*cli, InternalError)
+
+	if !presence.IsEmpty() {
+		t.Error("closeClient should delete client from presence service")
+	}
+
+	if !mockDispatch.AssertExpectations(t) {
+		t.Error("it should dispatch [clientDisconnected] event")
+	}
+
+	if !conn.AssertExpectations(t) {
+		t.Error("it should write ws close frame and close the connection")
+	}
 }
 
 var _ http.Handler = httpServer{}
