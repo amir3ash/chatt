@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log/slog"
 	"slices"
 	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // a sharded goroutine worker pool for writing to users' [Conn]
@@ -199,28 +202,46 @@ func (r *room) IsEmpty() bool {
 // SendMessage encodes the messages to json and send the encoded messages
 // to all client's [Conn].
 func (r *room) SendMessage(ctx context.Context, m *messages.Message) { // maybe message will be inconsistence with DB
-	bytes, _ := json.Marshal(m)
+	data, _ := json.Marshal(m)
 	clients, _ := r.onlinePersons.GetOnlineClients(ctx)
 
-	// slog.Debug("room.SendMessage called", slog.String("topicId", m.TopicID), "onlineClientsNum", len(clients))
+	err := r.clientsFanOut(ctx, data, clients)
+	if err != nil {
+		slog.ErrorContext(ctx, "can not fan out to clients", "err", "err")
+	}
+}
+
+func (*room) clientsFanOut(ctx context.Context, data []byte, clients iter.Seq[Client]) error {
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(100)
 
 	for client := range clients {
+		client := client
+		g.Go(func() error {
+			conn := client.Conn()
+			if conn == nil {
+				slog.Error("client's connection is nil", slog.String("userId", client.UserId()),
+					slog.String("clientId", client.ClientId()))
+				return nil
+			}
 
-		conn := client.Conn()
-		if conn == nil {
-			slog.Error("client's connection is nil", slog.String("userId", client.UserId()),
-				slog.String("clientId", client.ClientId()))
-			continue
-		}
+			if err := conn.Write(data); err != nil {
+				// never here
+				slog.Error("can not write to client's connection",
+					slog.String("userId", client.UserId()),
+					slog.String("clientId", client.ClientId()),
+					"err", err)
+			}
 
-		if err := conn.Write(bytes); err != nil {
-			// never here
-			slog.Error("can not write to client's connection",
-				slog.String("userId", client.UserId()),
-				slog.String("clientId", client.ClientId()),
-				"err", err)
-		}
+			return nil
+		})
 	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // simple safe listContainer
