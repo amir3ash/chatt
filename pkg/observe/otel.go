@@ -110,6 +110,9 @@ func newPropagator() propagation.TextMapPropagator {
 }
 
 func (opts *options) EnableTraceProvider() *options {
+	setDefaultEnv("OTEL_BSP_SCHEDULE_DELAY", "4000") // ms
+	setDefaultEnv("OTEL_BSP_MAX_QUEUE_SIZE", "4096")
+
 	ctx := context.Background()
 
 	traceExporter, err := otlptracehttp.New(ctx,
@@ -120,14 +123,7 @@ func (opts *options) EnableTraceProvider() *options {
 		return opts
 	}
 
-	if _, ok := os.LookupEnv("OTEL_BSP_SCHEDULE_DELAY"); !ok {
-		os.Setenv("OTEL_BSP_SCHEDULE_DELAY", "3000") // ms
-	}
-
-	bsp := trace.NewBatchSpanProcessor(traceExporter,
-		trace.WithBlocking(),
-		trace.WithMaxQueueSize(4096),
-	)
+	bsp := trace.NewBatchSpanProcessor(traceExporter)
 
 	traceProvider := trace.NewTracerProvider(
 		trace.WithSampler(trace.TraceIDRatioBased(0.6)),
@@ -159,6 +155,10 @@ func (opts *options) EnableMeterProvider() *options {
 }
 
 func (opts *options) EnableLoggerProvider() *options {
+	setDefaultEnv("OTEL_BLRP_SCHEDULE_DELAY", "2000") // ms
+	setDefaultEnv("OTEL_BLRP_MAX_QUEUE_SIZE", "4096")
+	setDefaultEnv("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE", "512")
+
 	logExporter, err := otlploghttp.New(
 		context.Background(),
 		otlploghttp.WithCompression(otlploghttp.GzipCompression),
@@ -166,10 +166,6 @@ func (opts *options) EnableLoggerProvider() *options {
 	if err != nil {
 		opts.handleErr(err)
 		return opts
-	}
-
-	if _, ok := os.LookupEnv("OTEL_BLRP_SCHEDULE_DELAY"); !ok {
-		os.Setenv("OTEL_BLRP_SCHEDULE_DELAY", "1000") // ms
 	}
 
 	blrp := log.NewBatchProcessor(logExporter)
@@ -202,4 +198,12 @@ func (opts *options) WithService(serviceName, namespace string) *options {
 
 	opts.resource = res
 	return opts
+}
+
+// setDefaultEnv looks up environment variable named by the key.
+// If the variable is not present in the environment the value, it sets defalutVal as value.
+func setDefaultEnv(key, defaultVal string) {
+	if _, ok := os.LookupEnv(key); !ok {
+		os.Setenv(key, defaultVal)
+	}
 }
