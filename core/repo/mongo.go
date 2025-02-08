@@ -57,7 +57,7 @@ func (m *Message) ToApiMessage() *messages.Message {
 		ID:       m.ID.Hex(),
 		Version:  m.Version,
 		TopicID:  m.TopicID,
-		SentAt:   m.CreatedAt,
+		SentAt:   m.CreatedAt.Truncate(time.Millisecond),
 		Text:     m.Text,
 	}
 }
@@ -89,7 +89,7 @@ func NewMPaginatin(c messages.Pagination) (p pagination) {
 }
 
 type Repo struct {
-	messages *mgm.Collection
+	msgColl *mgm.Collection
 	db       *mongo.Database
 }
 
@@ -97,7 +97,7 @@ func NewMongoRepo(cli *mongo.Client) (*Repo, error) {
 
 	db := cli.Database("chatting")
 	repo := &Repo{
-		messages: mgm.NewCollection(db, mgm.CollName(&Message{})),
+		msgColl: mgm.NewCollection(db, mgm.CollName(&Message{})),
 		db:       db,
 	}
 	err := db.CreateCollection(context.Background(), "hist")
@@ -121,7 +121,6 @@ func NewMongoRepo(cli *mongo.Client) (*Repo, error) {
 			slog.Debug("agregating messages into hist")
 			if _, err := repo.writeToBucket(context.Background()); err != nil {
 				slog.Error("can't aggregate messages", "err", err)
-				fmt.Println("hello from aggrgeage")
 			}
 		}
 	}()
@@ -141,7 +140,7 @@ func (r Repo) SendMsgToTopic(ctx context.Context, sender messages.Sender, topicI
 		Version:  1,
 	}
 
-	err := r.messages.CreateWithCtx(ctx, msg)
+	err := r.msgColl.CreateWithCtx(ctx, msg)
 	if err != nil {
 		return messages.Message{}, err
 	}
@@ -150,7 +149,7 @@ func (r Repo) SendMsgToTopic(ctx context.Context, sender messages.Sender, topicI
 		SenderId: msg.SenderId,
 		ID:       msg.ID.Hex(),
 		TopicID:  topicID,
-		SentAt:   msg.CreatedAt,
+		SentAt:   msg.CreatedAt.Truncate(time.Millisecond),
 		Text:     msg.Text,
 	}, err
 }
@@ -190,7 +189,7 @@ func (r Repo) writeToBucket(ctx context.Context) (bool, error) {
 		},
 	}
 
-	cur, err := r.messages.Aggregate(ctx, bson.A{
+	cur, err := r.msgColl.Aggregate(ctx, bson.A{
 		bson.M{
 			"$match": filterMsgs,
 		},
@@ -265,7 +264,7 @@ func (r Repo) writeToBucket(ctx context.Context) (bool, error) {
 
 	cur.Close(context.Background())
 
-	_, err = r.messages.DeleteMany(ctx, filterMsgs)
+	_, err = r.msgColl.DeleteMany(ctx, filterMsgs)
 	if err != nil {
 		return false, err
 	}
@@ -362,7 +361,7 @@ type ChangeStream struct {
 }
 
 func (r Repo) watchMessagesChangeStream(ctx context.Context, msgChan chan<- *ChangeStream) {
-	stream, err := r.messages.Watch(context.TODO(), mongo.Pipeline{})
+	stream, err := r.msgColl.Watch(context.TODO(), mongo.Pipeline{})
 	if err != nil {
 		slog.Error("can't watch messages collection", "err", err)
 		return
@@ -418,6 +417,14 @@ func (r Repo) WatchMessages() (stream <-chan *ChangeStream, cancel func()) {
 	return msgChan, func() {
 		cancelCtx()
 	}
+}
+
+func (r Repo) Ready(ctx context.Context) error {
+	err := r.db.Client().Ping(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("MongoRepo can not ping: %w", err)
+	}
+	return nil
 }
 
 // returns ObjectID from time.Time for filtering based on creation date
