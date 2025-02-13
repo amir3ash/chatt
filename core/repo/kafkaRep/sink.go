@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"sync"
 	"time"
 
 	otelkafkakonsumer "github.com/Trendyol/otel-kafka-konsumer"
@@ -84,14 +83,11 @@ type MongoConnect struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	msgChan  chan kafka.Message
-	mu       sync.Mutex
 	tracer   trace.Tracer
 }
 
-func NewMongoConnect(ctx context.Context, mongoCli *mongo.Client, kafkaReader *kafka.Reader) *MongoConnect {
-	db := mongoCli.Database("chatting2")
-
-	coll := mgm.NewCollection(db, mgm.CollName(&mongoAggr{}))
+func NewMongoConnect(ctx context.Context, mongoDB *mongo.Database, kafkaReader *kafka.Reader) *MongoConnect {
+	coll := mgm.NewCollection(mongoDB, mgm.CollName(&mongoAggr{}))
 	ctx, cancel := context.WithCancel(ctx)
 
 	reader, _ := otelkafkakonsumer.NewReader(
@@ -109,12 +105,11 @@ func NewMongoConnect(ctx context.Context, mongoCli *mongo.Client, kafkaReader *k
 
 	c := MongoConnect{
 		reader:   reader,
-		mongoCli: mongoCli,
+		mongoCli: mongoDB.Client(),
 		coll:     *coll,
 		ctx:      ctx,
 		cancel:   cancel,
 		msgChan:  make(chan kafka.Message),
-		mu:       sync.Mutex{},
 		tracer:   otel.Tracer("golang-mongo-connect"),
 	}
 
@@ -168,7 +163,7 @@ func (c *MongoConnect) readKafka() (err error) {
 				slog.Info("kafka reader closed")
 				return err
 			}
-			slog.Error("get error while reading meassageas", "err", err)
+			slog.Error("fetching kafka messages failed", "err", err)
 			return err
 		}
 
@@ -306,7 +301,7 @@ func getEventType(m *kafka.Message) (evType EventType, err error) {
 	if m == nil {
 		return "", errors.New("kafkaMessage is nil")
 	}
-	
+
 	for _, h := range m.Headers {
 		if h.Key == "eventType" {
 			evType, err = ValidateEventType(h.Value)
@@ -338,7 +333,7 @@ func extractMessageFromEvents(events []Event) []repo.Message {
 	res := make([]repo.Message, 0, len(events))
 
 	for i := range events {
-		ev, ok := events[i].(MessageInserted)
+		ev, ok := events[i].(*MessageInserted)
 		if !ok {
 			continue
 		}

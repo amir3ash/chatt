@@ -45,7 +45,8 @@ func main() {
 	kafkaReader := kafkarep.NewInsecureReader(conf.KafkaReader)
 	defer kafkaReader.Close()
 
-	mongoKConnect := kafkarep.NewMongoConnect(context.Background(), mongoCli, kafkaReader)
+	mongoDB := mongoCli.Database("chatting2")
+	mongoKConnect := kafkarep.NewMongoConnect(context.Background(), mongoDB, kafkaReader)
 	defer mongoKConnect.Close()
 
 	s := make(chan os.Signal, 1)

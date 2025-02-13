@@ -1,13 +1,21 @@
 package kafkarep
 
 import (
+	"chat-system/core/messages"
 	"context"
 	"fmt"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/protocol"
 	"github.com/stretchr/testify/assert"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/mongodb"
+	"github.com/testcontainers/testcontainers-go/modules/redpanda"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type mockKafkaFetch struct {
@@ -67,6 +75,7 @@ func TestMongoConnect_readKafka(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			time.Sleep(time.Millisecond) // for t.Errorf race condition
 			c := &MongoConnect{
 				reader:  mockKafkaFetch{tt.fetch},
 				ctx:     tt.ctx,
@@ -88,6 +97,97 @@ func TestMongoConnect_readKafka(t *testing.T) {
 			}
 		})
 	}
+}
+
+func startKakfa(t *testing.T, ctx context.Context) (endpoint string) {
+	t.Helper()
+
+	redpadaContainer, err := redpanda.Run(ctx, "docker.redpanda.com/redpandadata/redpanda:v24.3.3",
+		redpanda.WithAutoCreateTopics(),
+	)
+	t.Cleanup(func() {
+		if err := testcontainers.TerminateContainer(redpadaContainer); err != nil {
+			t.Errorf("failed to terminate container: %s", err)
+		}
+	})
+
+	if err != nil {
+		t.Fatalf("failed to start container: %s", err)
+	}
+
+	endpoint, err = redpadaContainer.KafkaSeedBroker(ctx)
+	if err != nil {
+		t.Fatalf("failed to get connection string: %s", err)
+	}
+
+	return endpoint
+}
+func StartMongo(t *testing.T, ctx context.Context) (cli *mongo.Client) {
+	t.Helper()
+
+	mongodbContainer, err := mongodb.Run(ctx, "mongo:noble")
+	t.Cleanup(func() {
+		if err := testcontainers.TerminateContainer(mongodbContainer); err != nil {
+			t.Errorf("failed to terminate container: %s", err)
+		}
+	})
+
+	if err != nil {
+		t.Fatalf("failed to start container: %s", err)
+	}
+
+	endpoint, err := mongodbContainer.ConnectionString(ctx)
+	if err != nil {
+		t.Fatalf("failed to get connection string: %s", err)
+	}
+
+	mongoCli, err := mongo.Connect(ctx, options.Client().ApplyURI(endpoint))
+	if err != nil {
+		t.Fatalf("failed to connect to MongoDB: %s", err)
+	}
+
+	return mongoCli
+}
+
+func Test(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip")
+	}
+
+	ctx := context.Background()
+	kafkaEndpoint := startKakfa(t, ctx)
+	mongoCli := StartMongo(t, ctx)
+	// kafkaEndpoint = "localhost:9092"
+	writerConf := &WriterConf{KafkaHost: kafkaEndpoint, MsgTopic: "topic", BatchTimeout: 50 * time.Millisecond}
+	readerConf := &ReaderConf{KafkaHost: kafkaEndpoint, Topic: "topic", MaxBytes: 3000, GroupID: "grp", MaxWait: 300 * time.Millisecond}
+
+	kafkaWriter := NewInsecureWriter(writerConf)
+	kafkaReader := NewInsecureReader(readerConf)
+	kafkaReader.ReadLag(ctx)
+
+	db := mongoCli.Database("chatting2")
+	NewMongoConnect(ctx, db, kafkaReader)
+
+	repo := NewKafkaRepo(kafkaWriter, db)
+
+	_, err := repo.SendMsgToTopic(ctx, messages.Sender{ID: "sender-id"}, "test-topic", "text")
+	if err != nil {
+		t.Fatalf("can not send mesg: %v", err)
+	}
+
+	time.Sleep(9000 * time.Millisecond)
+	slog.Info("list messages")
+	messsages, err := repo.ListMessages(ctx, "test-topic", messages.Pagination{
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("can not list messages: %v", err)
+	}
+
+	if len(messsages) != 1 {
+		t.Fatalf("messages' len is %d, expected 1", len(messsages))
+	}
+	t.Fail()
 }
 
 func Test_getEventType(t *testing.T) {
