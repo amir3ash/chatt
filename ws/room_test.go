@@ -3,8 +3,10 @@ package ws
 import (
 	"bytes"
 	"chat-system/core/messages"
+	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"testing"
@@ -108,9 +110,9 @@ func Test_SendMessage_writingToConn(t *testing.T) {
 	room := newRoom("room_id", []Client{cli})
 	msg := messages.Message{ID: "msgId"}
 
-	room.SendMessage(&msg)
+	room.SendMessage(context.Background(), &msg)
 
-	expected, _ := json.Marshal(msg)
+	expected, _ := json.Marshal(&msg)
 	gotBytes := conn.getReceived()
 
 	if !bytes.Equal(expected, gotBytes) {
@@ -124,5 +126,24 @@ func TestSendMessageWithError(t *testing.T) {
 	room := newRoom("room_id", []Client{cli})
 	msg := messages.Message{ID: "msgId"}
 
-	room.SendMessage(&msg)
+	room.SendMessage(context.Background(), &msg)
+}	
+
+func Benchmark(b *testing.B) {
+	s := NewRoomServer(mockDeviceGetter{}, mockAuthorizedTopics{})
+	for i := range 10000 {
+		s.createRoom(fmt.Sprint(i))
+	}
+	b.ResetTimer()
+	b.SetParallelism(30_000)
+
+	b.RunParallel(func(p *testing.PB) {
+		i := rand.Int64N(1000000)
+		for p.Next() {
+			cId := fmt.Sprint(i)
+			s.onClientConnected(Client{cId, cId, nil})
+			i++
+			i = i % 5000
+		}
+	})
 }

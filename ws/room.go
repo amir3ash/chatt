@@ -5,15 +5,18 @@ import (
 	"chat-system/ws/presence"
 	"context"
 	"encoding/json"
+	"fmt"
+	"iter"
 	"log/slog"
-	"runtime"
 	"slices"
 	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // a sharded goroutine worker pool for writing to users' [Conn]
 // to reduce all generated goroutine size.
-var workerIns shardedWriter
+// var workerIns shardedWriter
 
 type whoCanReadTopic interface {
 	WhoCanWatchTopic(topicId string) ([]string, error)
@@ -29,8 +32,8 @@ type devicesGetter[T presence.Device] interface {
 }
 
 func init() {
-	workerIns = newShardedWriter(min(2, uint32(runtime.NumCPU())))
-	go workerIns.run()
+	// workerIns = newShardedWriter(min(2, uint32(runtime.NumCPU())))
+	// go workerIns.run()
 }
 
 // roomServer manages all rooms
@@ -38,103 +41,72 @@ type roomServer struct {
 	onlinePersons devicesGetter[Client]
 	authz         whoCanReadTopic
 	rooms         map[string]*room
-	clientsRooms  map[string][]string // clientId -> []roomId. rooms which the user connected to.
-	clientsMutex  sync.RWMutex
+	clientsRooms  *mapList[string, *room] // clientId -> []*room. rooms which the user connected to.
 	sync.RWMutex
 }
 
 func NewRoomServer(b devicesGetter[Client], authz whoCanReadTopic) *roomServer {
 	server := roomServer{
-		b, authz, make(map[string]*room), make(map[string][]string),
-		sync.RWMutex{}, sync.RWMutex{},
+		b, authz, make(map[string]*room), &mapList[string, *room]{},
+		sync.RWMutex{},
 	}
 	return &server
 }
 
 // Adds client to room and remembers rooms which the client connected to.
-func (r *roomServer) joinClientToRoom(c Client, room *room) {
-	r.clientsMutex.Lock()
-	defer r.clientsMutex.Unlock()
-
-	rooms, ok := r.clientsRooms[c.ClientId()]
-	if ok {
-		rooms = append(rooms, room.ID)
-	} else {
-		rooms = []string{room.ID}
+func (r *roomServer) joinClientToRooms(c Client, rooms ...*room) {
+	for _, room := range rooms {
+		r.clientsRooms.insert(c.ClientId(), room)
+		room.addClient(c)
 	}
-
-	r.clientsRooms[c.ClientId()] = rooms
-
-	room.addClient(c)
 }
 
 // Removes client from room and remove the room from user's websocket rooms.
-func (r *roomServer) leaveClientFromRoom(c Client, room *room) {
-	r.clientsMutex.Lock()
-	defer r.clientsMutex.Unlock()
-
-	rooms, ok := r.clientsRooms[c.ClientId()]
-	if !ok {
-		return
+func (r *roomServer) leaveClientFromRoom(c Client, rooms ...*room) {
+	for _, room := range rooms {
+		r.clientsRooms.deleteValue(c.ClientId(), room)
+		room.removeClient(c)
 	}
-
-	rooms = findAndDelete(rooms, room.ID)
-
-	if len(rooms) == 0 {
-		delete(r.clientsRooms, c.ClientId())
-	} else {
-		r.clientsRooms[c.ClientId()] = rooms
-	}
-
-	room.removeClient(c)
 }
 
 // onClientConnected gets authorzided topics
 // by calling [whoCanReadTopic]'s function and
 // adds the [Client] c to authorized rooms.
-func (r *roomServer) onClientConnected(c Client) {
+func (r *roomServer) onClientConnected(c Client) error {
 	serverTopics := make([]string, 0, len(r.rooms))
 	for roomId := range r.rooms {
 		serverTopics = append(serverTopics, roomId)
 	}
-	slog.Debug("OnConnect in roomserver", "rooms", r.rooms)
 
 	topics, err := r.authz.TopicsWhichUserCanWatch(c.UserId(), serverTopics)
 	if err != nil {
-		slog.Error("can't get topics which the user can read", "err", err)
-		return
+		return fmt.Errorf("can not get topics which ther user can read: %w", err)
 	}
 
-	for _, topicId := range topics {
-		room := r.rooms[topicId]
-		r.joinClientToRoom(c, room)
+	rooms := make([]*room, 0, 1)
+	for _, topic := range topics {
+		rooms = append(rooms, r.rooms[topic])
 	}
+
+	r.joinClientToRooms(c, rooms...)
+	return nil
 }
 
 // onClientDisconnected remove [Client] c from rooms which connected before.
 // then deletes rooms with zero clients.
-func (r *roomServer) onClientDisconnected(c Client) {
-	r.clientsMutex.RLock()
-	rooms := slices.Clone(r.clientsRooms[c.ClientId()])
-	r.clientsMutex.RUnlock()
+func (r *roomServer) onClientDisconnected(c Client) error {
+	rooms := r.clientsRooms.cloneValues(c.ClientId())
+	r.leaveClientFromRoom(c, rooms...)
 
 	r.Lock()
 	defer r.Unlock()
 
-	for _, roomId := range rooms {
-		room, ok := r.rooms[roomId]
-		if !ok {
-			slog.Warn("client's rooms is not synchronized with rooms",
-				slog.String("clientId", c.ClientId()), slog.String("roomId", roomId))
-			continue
-		}
-
-		r.leaveClientFromRoom(c, room)
-
+	for _, room := range rooms {
 		if room.IsEmpty() {
-			delete(r.rooms, roomId)
+			delete(r.rooms, room.ID)
 		}
 	}
+	return nil
 }
 
 // returns [room] with specified topicID.
@@ -153,13 +125,10 @@ func (r *roomServer) getRoom(topicID string) *room {
 // SendMessageTo sends [messages.Message] msg to the room with specified topicId.
 //
 // it gets existing [room] or creates new room, and calls room's SendMessage func.
-func (r *roomServer) SendMessageTo(topicId string, msg *messages.Message) {
+func (r *roomServer) SendMessageTo(ctx context.Context, topicId string, msg *messages.Message) {
 	room := r.getRoom(topicId)
-	if room == nil {
-		room = r.createRoom(topicId)
-	}
 
-	room.SendMessage(msg)
+	room.SendMessage(ctx, msg)
 }
 
 // createRoom creates new [room] with online authorzed users.
@@ -182,7 +151,7 @@ func (r *roomServer) createRoom(topicId string) *room {
 	}
 
 	userConnections := r.onlinePersons.GetDevicesForUsers(userIds...)
-	slog.Debug("roomServer.createRoom", "topicId", topicId, "userConns", userConnections)
+	slog.Debug("roomServer.createRoom", "topicId", topicId, "userConns", len(userConnections))
 
 	room = newRoom(topicId, userConnections)
 	r.rooms[topicId] = room
@@ -196,10 +165,8 @@ var _ presence.Device = Client{}
 
 // room contains online clients for a particular topic.
 type room struct {
-	ID               string
-	onlinePersons    *presence.MemService[Client]
-	destroyObservers []func(roomId string)
-	mu               sync.RWMutex
+	ID            string
+	onlinePersons *presence.MemService[Client]
 }
 
 func newRoom(id string, connections []Client) *room {
@@ -211,7 +178,7 @@ func newRoom(id string, connections []Client) *room {
 		persons.Connect(ctx, c)
 	}
 
-	return &room{id, persons, make([]func(string), 0), sync.RWMutex{}}
+	return &room{id, persons}
 }
 
 // adds the [Client] c to online users of the [room] r.
@@ -234,13 +201,111 @@ func (r *room) IsEmpty() bool {
 //
 // SendMessage encodes the messages to json and send the encoded messages
 // to all client's [Conn].
-func (r *room) SendMessage(m *messages.Message) { // maybe message will be inconsistence with DB
-	slog.Debug("room.SendMessage called", slog.String("topicId", m.TopicID), "onlinepersions", r.onlinePersons)
-	bytes, _ := json.Marshal(m)
+func (r *room) SendMessage(ctx context.Context, m *messages.Message) { // maybe message will be inconsistence with DB
+	data, _ := json.Marshal(m)
+	clients, _ := r.onlinePersons.GetOnlineClients(ctx)
 
-	clients, _ := r.onlinePersons.GetOnlineClients(context.Background())
+	err := r.clientsFanOut(ctx, data, clients)
+	if err != nil {
+		slog.ErrorContext(ctx, "can not fan out to clients", "err", "err")
+	}
+}
+
+func (*room) clientsFanOut(ctx context.Context, data []byte, clients iter.Seq[Client]) error {
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(100)
 
 	for client := range clients {
-		workerIns.writeTo(client, bytes)
+		client := client
+		g.Go(func() error {
+			conn := client.Conn()
+			if conn == nil {
+				slog.Error("client's connection is nil", slog.String("userId", client.UserId()),
+					slog.String("clientId", client.ClientId()))
+				return nil
+			}
+
+			if err := conn.Write(data); err != nil {
+				// never here
+				slog.Error("can not write to client's connection",
+					slog.String("userId", client.UserId()),
+					slog.String("clientId", client.ClientId()),
+					"err", err)
+			}
+
+			return nil
+		})
 	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// simple safe listContainer
+type listContainer[T comparable] struct {
+	list []T
+	mu   sync.Mutex
+}
+
+// used in [roomServer]
+type mapList[K, V comparable] struct {
+	m sync.Map ///map[K]*listContainer[V]
+}
+
+func (ml *mapList[K, V]) insert(key K, val V) {
+	c, _ := ml.m.LoadOrStore(key, &listContainer[V]{})
+	container := c.(*listContainer[V])
+
+	container.mu.Lock()
+	container.list = append(container.list, val)
+	container.mu.Unlock()
+}
+
+func (ml *mapList[K, V]) deleteValue(key K, val V) {
+	c, ok := ml.m.Load(key)
+	if !ok {
+		return
+	}
+
+	container := c.(*listContainer[V])
+
+	container.mu.Lock()
+
+	list := container.list
+	lastIndex := len(list) - 1
+	var nilVal V
+
+	for i := 0; i <= lastIndex; i++ {
+		if list[i] == val {
+			list[i], list[lastIndex] = list[lastIndex], nilVal
+			list = list[:lastIndex]
+			break
+		}
+	}
+
+	if len(list) == 0 {
+		ml.m.Delete(key)
+	} else {
+		container.list = list
+	}
+
+	container.mu.Unlock()
+}
+
+func (ml *mapList[K, V]) cloneValues(key K) (values []V) {
+	c, ok := ml.m.Load(key)
+	if !ok {
+		return nil
+	}
+
+	container := c.(*listContainer[V])
+
+	container.mu.Lock()
+	values = slices.Clone(container.list)
+	container.mu.Unlock()
+
+	return
 }

@@ -7,9 +7,7 @@ import (
 	"time"
 )
 
-var ErrNotAuthorized = errors.New("not authorized")
-
-// var TopicNotFound = errors.New("topic not found")
+var ErrEmptyTopicId = errors.New("topicId is empty")
 
 func NewService(repo Repository, auth permissionChecker) *svc {
 	return &svc{repo: repo, authz: auth}
@@ -20,6 +18,7 @@ type Sender struct{ ID string }
 type Message struct {
 	SenderId string    `json:"senderId"`
 	ID       string    `json:"id"`
+	Version  uint      `json:"v"`
 	TopicID  string    `josn:"topicId"`
 	SentAt   time.Time `json:"sentAt"`
 	Text     string    `json:"text"`
@@ -36,13 +35,22 @@ type svc struct {
 }
 
 func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]Message, error) {
-	can, err := s.authz.Check(ctx, authz.UserIdFromCtx(ctx), "read", "topic", topicID)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if topicID == "" {
+		return nil, ErrEmptyTopicId
+	}
+
+	userId := authz.UserIdFromCtx(ctx)
+	can, err := s.authz.Check(ctx, userId, "read", "topic", topicID)
 	if err != nil {
 		return nil, err
 	}
 
 	if !can {
-		return nil, ErrNotAuthorized
+		return nil, ErrNotAuthorized{Subject: userId, ResorceType: "topic", ResorceId: topicID}
 	}
 
 	res, err := s.repo.ListMessages(ctx, topicID, p)
@@ -50,6 +58,14 @@ func (s svc) ListMessages(ctx context.Context, topicID string, p Pagination) ([]
 }
 
 func (s *svc) SendMessage(ctx context.Context, topicID string, message string) (Message, error) {
+	if err := ctx.Err(); err != nil {
+		return Message{}, err
+	}
+
+	if topicID == "" {
+		return Message{}, ErrEmptyTopicId
+	}
+
 	userId := authz.UserIdFromCtx(ctx)
 
 	can, err := s.authz.Check(ctx, userId, "write", "topic", topicID)
@@ -58,7 +74,7 @@ func (s *svc) SendMessage(ctx context.Context, topicID string, message string) (
 	}
 
 	if !can {
-		return Message{}, ErrNotAuthorized
+		return Message{}, ErrNotAuthorized{Subject: userId, ResorceType: "topic", ResorceId: topicID}
 	}
 
 	msg, err := s.repo.SendMsgToTopic(ctx, Sender{ID: userId}, topicID, message)

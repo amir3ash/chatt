@@ -76,8 +76,8 @@ func TestHandler_listMessages(t *testing.T) {
 		wantErr    bool
 		wantStatsu int
 	}{
-		{"", args{context.Background(), &getMessagesInput{}}, &getMessagesOutput{}, messages.ErrNotAuthorized, true, 403},
-		{"", args{cancelledCtx, &getMessagesInput{}}, &getMessagesOutput{}, messages.ErrNotAuthorized, true, 403},
+		{"", args{context.Background(), &getMessagesInput{}}, &getMessagesOutput{}, messages.ErrNotAuthorized{}, true, 403},
+		{"", args{cancelledCtx, &getMessagesInput{}}, &getMessagesOutput{}, messages.ErrNotAuthorized{}, true, 403},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

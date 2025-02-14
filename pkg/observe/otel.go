@@ -4,16 +4,17 @@ import (
 	"chat-system/version"
 	"context"
 	"errors"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/log/global"
-
-	// "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -101,14 +102,17 @@ func SetupOTelSDK(ctx context.Context, opts *options) (shutdown func(context.Con
 }
 
 func newPropagator() propagation.TextMapPropagator {
-	// return propagation.NewCompositeTextMapPropagator(
-	// 	propagation.TraceContext{},
-	// 	propagation.Baggage{},
-	// )
-	return propagation.TraceContext{}
+	return propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	)
+	// return propagation.TraceContext{}
 }
 
 func (opts *options) EnableTraceProvider() *options {
+	setDefaultEnv("OTEL_BSP_SCHEDULE_DELAY", "4000") // ms
+	setDefaultEnv("OTEL_BSP_MAX_QUEUE_SIZE", "4096")
+
 	ctx := context.Background()
 
 	traceExporter, err := otlptracehttp.New(ctx,
@@ -119,10 +123,10 @@ func (opts *options) EnableTraceProvider() *options {
 		return opts
 	}
 
-	bsp := trace.NewBatchSpanProcessor(traceExporter, trace.WithBlocking())
+	bsp := trace.NewBatchSpanProcessor(traceExporter)
 
 	traceProvider := trace.NewTracerProvider(
-		trace.WithSampler(trace.AlwaysSample()),
+		trace.WithSampler(trace.TraceIDRatioBased(0.6)),
 		trace.WithSpanProcessor(bsp),
 		trace.WithResource(opts.resource),
 	)
@@ -151,6 +155,10 @@ func (opts *options) EnableMeterProvider() *options {
 }
 
 func (opts *options) EnableLoggerProvider() *options {
+	setDefaultEnv("OTEL_BLRP_SCHEDULE_DELAY", "2000") // ms
+	setDefaultEnv("OTEL_BLRP_MAX_QUEUE_SIZE", "4096")
+	setDefaultEnv("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE", "512")
+
 	logExporter, err := otlploghttp.New(
 		context.Background(),
 		otlploghttp.WithCompression(otlploghttp.GzipCompression),
@@ -160,10 +168,14 @@ func (opts *options) EnableLoggerProvider() *options {
 		return opts
 	}
 
+	blrp := log.NewBatchProcessor(logExporter)
+
 	loggerProvider := log.NewLoggerProvider(
-		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+		log.WithProcessor(blrp),
 		log.WithResource(opts.resource),
 	)
+
+	slog.SetDefault(otelslog.NewLogger(""))
 
 	opts.loggerProvider = loggerProvider
 	return opts
@@ -186,4 +198,12 @@ func (opts *options) WithService(serviceName, namespace string) *options {
 
 	opts.resource = res
 	return opts
+}
+
+// setDefaultEnv looks up environment variable named by the key.
+// If the variable is not present in the environment the value, it sets defalutVal as value.
+func setDefaultEnv(key, defaultVal string) {
+	if _, ok := os.LookupEnv(key); !ok {
+		os.Setenv(key, defaultVal)
+	}
 }

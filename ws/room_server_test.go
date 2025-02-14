@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"testing"
@@ -38,13 +39,13 @@ func TestRoomServer_joinClientToRoom(t *testing.T) {
 	room := r.getRoom("roomId")
 	cli := Client{"cID", "uID", nil}
 
-	r.joinClientToRoom(cli, room)
+	r.joinClientToRooms(cli, room)
 
 	if !roomContainsClient(room, cli) {
 		t.Error("it should add client to the room")
 	}
 
-	if r.clientsRooms[cli.ClientId()][0] != "roomId" {
+	if r.clientsRooms.cloneValues(cli.ClientId())[0].ID != "roomId" {
 		t.Errorf("it should remember websocket rooms for every client, clientRooms: %v", r.clientsRooms)
 	}
 }
@@ -55,7 +56,7 @@ func TestRoomServer_leaveClientFromRoom(t *testing.T) {
 	room := r.getRoom("roomId")
 	client := Client{"cID", "uID", nil}
 
-	r.joinClientToRoom(client, room)
+	r.joinClientToRooms(client, room)
 
 	if !roomContainsClient(room, client) {
 		t.Error("joinClientToRoom should add the client to the room")
@@ -67,7 +68,7 @@ func TestRoomServer_leaveClientFromRoom(t *testing.T) {
 		t.Error("it should remove client from the room")
 	}
 
-	if len(r.clientsRooms[client.ClientId()]) > 0 {
+	if len(r.clientsRooms.cloneValues(client.ClientId())) > 0 {
 		t.Errorf("it should remove websocket room for the client")
 	}
 }
@@ -132,16 +133,18 @@ func TestRoomServer_onClientDisconnected(t *testing.T) {
 	rooms[0].addClient(other_client) // room "room1" has two clients
 	r.onClientConnected(cli)
 
-	clientRooms := r.clientsRooms[cli.ClientId()]
-	slices.Sort(clientRooms)
+	clientRooms := r.clientsRooms.cloneValues(cli.ClientId())
 
-	if !slices.Equal(clientRooms, []string{"room1", "room2", "room3"}) {
-		t.Errorf("clients must connected to authorized rooms, clientRooms: %v", r.clientsRooms[cli.ClientId()])
+	if !areRoomSlicesSame(t, clientRooms, rooms) {
+		t.Errorf("clients must connected to authorized rooms, clientRooms: %v, expected: %v", clientRooms, rooms)
 		return
 	}
 
-	r.onClientDisconnected(cli)
-
+	err := r.onClientDisconnected(cli)
+	if err != nil {
+		t.Fatalf("onClientDisconnected returns error: %v", err)
+	}
+	
 	for _, room := range rooms {
 		if roomContainsClient(room, cli) {
 			t.Errorf("room server should remove client from his rooms, roomId: %s", room.ID)
@@ -160,4 +163,25 @@ func TestRoomServer_onClientDisconnected(t *testing.T) {
 	if _, found := r.rooms["room1"]; !found {
 		t.Errorf("it should not remove none empty rooms")
 	}
+}
+
+func areRoomSlicesSame(t *testing.T, rooms1, rooms2 []*room) bool {
+	t.Helper()
+
+	if len(rooms1) != len(rooms2) {
+		return false
+	}
+
+	a1 := slices.Clone(rooms1)
+	a2 := slices.Clone(rooms2)
+	f := func(r1, r2 *room) int { return cmp.Compare(r1.ID, r2.ID) }
+	slices.SortStableFunc(a1, f)
+	slices.SortStableFunc(a2, f)
+
+	for i := range len(a1) {
+		if a1[i] != a2[i] {
+			return false
+		}
+	}
+	return true
 }

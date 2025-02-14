@@ -2,10 +2,14 @@ package ws
 
 import (
 	"chat-system/core/repo"
+
+	"context"
+
+	"go.opentelemetry.io/otel"
 )
 
 type MessageWatcher interface {
-	// returns change log channel [*repo.ChangeStream]. 
+	// returns change log channel [*repo.ChangeStream].
 	// cancel func should be called.
 	WatchMessages() (stream <-chan *repo.ChangeStream, cancel func())
 }
@@ -16,10 +20,19 @@ func ReadChangeStream(r MessageWatcher, server *roomServer) {
 	stream, cancel := r.WatchMessages()
 	defer cancel()
 
+	traceProvicer := otel.Tracer("MessageCDC")
 	for chLog := range stream {
+		ctx := context.Background()
+		if chLog.Carrier != nil {
+			otel.GetTextMapPropagator().Extract(ctx, chLog.Carrier)
+		}
+
+		ctx, span := traceProvicer.Start(ctx, "SendMessageTo")
+
 		if chLog.OperationType == "insert" {
 			msg := chLog.Msg
-			server.SendMessageTo(msg.TopicID, msg)
+			server.SendMessageTo(ctx, msg.TopicID, msg)
 		}
+		span.End()
 	}
 }
