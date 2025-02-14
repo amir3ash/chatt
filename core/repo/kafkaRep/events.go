@@ -42,7 +42,6 @@ type Event interface {
 
 type MessageEvent interface {
 	Event
-	MessageID() string
 	TopicID() string
 }
 
@@ -50,6 +49,11 @@ type MessageInserted struct {
 	EventId EventID      `json:"event_id,omitempty"`
 	EvType  EventType    `json:"event_type,omitempty"`
 	Msg     repo.Message `json:"msg,omitempty"`
+}
+
+// TopicID implements MessageEvent.
+func (e MessageInserted) TopicID() string {
+	return e.Msg.TopicID
 }
 
 type MessageDeleted struct {
@@ -106,4 +110,5 @@ func UnmarshalEvent(t EventType, v []byte) (ev Event, err error) {
 
 var _ Event = MessageInserted{}
 var _ Event = MessageDeleted{}
-var _ Event = MessageDeleted{}
+
+var _ MessageEvent = MessageInserted{}
