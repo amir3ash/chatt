@@ -66,7 +66,7 @@ func UserIdFromCookieHeader(h http.Header) string {
 	}
 
 	for _, line := range lines {
-		if cookies, err := http.ParseCookie(line); err != nil {
+		if cookies, err := http.ParseCookie(line); err == nil {
 			for _, c := range cookies {
 				if c.Name == "userId" {
 					return c.Value
