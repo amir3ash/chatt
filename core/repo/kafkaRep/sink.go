@@ -249,6 +249,7 @@ func (c *MongoConnect) run() {
 	}
 }
 
+// returns a mongodb transaction handler for specific [EventType].
 func (c *MongoConnect) getHandler(ev MessageEvent) mongoMessageHandler {
 	handler, ok := c.handlers[ev.EventType()]
 	if ok {
@@ -306,7 +307,7 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 
 	if err == nil {
 		span.SetStatus(codes.Ok, "OK")
-		slog.InfoContext(ctx, "tranaction finished succesfuly")
+		slog.InfoContext(ctx, "transaction finished succesfuly")
 	} else {
 		span.SetStatus(codes.Error, "transaction failed")
 		span.RecordError(err)

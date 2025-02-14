@@ -14,6 +14,7 @@ type mongoMessageHandler interface {
 	Handle(mongo.SessionContext) error
 }
 
+// A transaction handler [mongoMessageHandler] for event type [EvTypeMessageInserted].
 type mesgInsertedHandler struct {
 	events []MessageInserted
 	coll   mgm.Collection
