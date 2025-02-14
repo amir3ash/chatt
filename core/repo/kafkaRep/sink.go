@@ -24,6 +24,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+var ErrEventTypeHeaderNotFound = errors.New("eventType header not found in kafka.Message")
+
 type ReaderConf struct {
 	KafkaHost string        `env:"KAFKA_HOST"`
 	Topic     string        `env:"KAFKA_TOPIC" default:"chat-messages"`
@@ -265,6 +267,12 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 		kafkaMsg := msgList[i]
 		eventType, err := getEventType(&kafkaMsg)
 		if err != nil {
+			slog.Error("can not get eventType",
+				slog.String("topic", kafkaMsg.Topic),
+				slog.Int("partition", kafkaMsg.Partition),
+				slog.Int64("offset", kafkaMsg.Offset),
+				"err", err)
+
 			return err
 		}
 
@@ -306,12 +314,6 @@ func getEventType(m *kafka.Message) (evType EventType, err error) {
 		if h.Key == "eventType" {
 			evType, err = ValidateEventType(h.Value)
 			if err != nil {
-				slog.Error("can not validate EventType",
-					slog.String("topic", m.Topic),
-					slog.Int("partition", m.Partition),
-					slog.Int64("offset", m.Offset),
-					"err", err)
-
 				return "", err
 			}
 			break
@@ -319,13 +321,9 @@ func getEventType(m *kafka.Message) (evType EventType, err error) {
 	}
 
 	if evType == "" {
-		slog.Error("can not find eventType header in kafka.Message",
-			slog.String("topic", m.Topic),
-			slog.Int("partition", m.Partition),
-			slog.Int64("offset", m.Offset))
-
-		return "", fmt.Errorf("eventType header not found in kafka.Message")
+		return "", ErrEventTypeHeaderNotFound
 	}
+
 	return evType, nil
 }
 
