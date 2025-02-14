@@ -34,12 +34,9 @@ func NewInsecureWriter(conf *WriterConf) *kafka.Writer {
 		Addr:                   kafka.TCP(conf.KafkaHost),
 		Topic:                  conf.MsgTopic,
 		AllowAutoTopicCreation: true,
-		// Balancer:               &kafka.LeastBytes{},
-		RequiredAcks: kafka.RequireOne,
-		BatchTimeout: conf.BatchTimeout,
-		Compression:  kafka.Snappy,
-
-		// Transport: kafka.DefaultTransport,
+		RequiredAcks:           kafka.RequireOne,
+		BatchTimeout:           conf.BatchTimeout,
+		Compression:            kafka.Snappy,
 	}
 
 	return kafkaWriter
@@ -58,7 +55,11 @@ type kafkaRepo struct {
 
 func NewKafkaRepo(kafkaWriter *kafka.Writer, db *mongo.Database) *kafkaRepo {
 	coll := mgm.NewCollection(db, mgm.CollName(&mongoAggr{}))
-	return &kafkaRepo{writer: createWriter(kafkaWriter), coll: *coll, messagesTopic: kafkaWriter.Topic}
+	return &kafkaRepo{
+		writer:        createWriter(kafkaWriter),
+		coll:          *coll,
+		messagesTopic: kafkaWriter.Topic,
+	}
 }
 
 func createWriter(kafkaWriter *kafka.Writer) *otelkafkakonsumer.Writer {
@@ -253,11 +254,13 @@ func (c *messageChannel) watch(channel chan *repo.ChangeStream) {
 		}
 
 		msg := event.(MessageInserted).Msg
+		carrier := otelkafkakonsumer.NewMessageCarrier(&kafkaMsg)
 
 		channel <- &repo.ChangeStream{
 			DocumentKey:   msg.ID.Hex(),
 			OperationType: "insert",
 			Msg:           msg.ToApiMessage(),
+			Carrier:       carrier,
 		}
 	}
 }
