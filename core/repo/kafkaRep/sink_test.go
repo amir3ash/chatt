@@ -187,7 +187,6 @@ func Test(t *testing.T) {
 	if len(messsages) != 1 {
 		t.Fatalf("messages' len is %d, expected 1", len(messsages))
 	}
-	t.Fail()
 }
 
 func Test_getEventType(t *testing.T) {
