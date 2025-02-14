@@ -4,6 +4,10 @@ import (
 	"chat-system/authz"
 	"chat-system/core/messages"
 	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
@@ -123,4 +127,33 @@ func (c ctx) Value(key any) any {
 	}
 
 	return nil
+}
+
+var ErrInvalidIDVersion = errors.New("invalid IdVersion")
+
+type IdVersion string
+
+func NewIDVersion(id string, version uint) (IdVersion, error) {
+	if version == 0 || id == "" {
+		return "", ErrInvalidIDVersion
+	}
+	return IdVersion(fmt.Sprintf("%s-%d", id, version)), nil
+}
+
+// GetIdVersion parses IdVersion and returns [ErrInvalidIDVersion] if it fails.
+func (idv IdVersion) GetIdVersion() (id string, version uint, err error) {
+	s := strings.Split(string(idv), "-")
+	if len(s) != 2 {
+		return "", 0, ErrInvalidIDVersion
+	}
+
+	id = s[0]
+
+	v64, err := strconv.ParseUint(s[1], 10, 0)
+	if err != nil {
+		return "", 0, ErrInvalidIDVersion
+	}
+	version = uint(v64)
+
+	return
 }
