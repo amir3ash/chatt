@@ -12,10 +12,8 @@ import (
 	otelkafkakonsumer "github.com/Trendyol/otel-kafka-konsumer"
 	"github.com/kamva/mgm/v3"
 	"github.com/segmentio/kafka-go"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -86,6 +84,7 @@ type MongoConnect struct {
 	cancel   context.CancelFunc
 	msgChan  chan kafka.Message
 	tracer   trace.Tracer
+	handlers map[EventType]mongoMessageHandler
 }
 
 func NewMongoConnect(ctx context.Context, mongoDB *mongo.Database, kafkaReader *kafka.Reader) *MongoConnect {
@@ -113,6 +112,7 @@ func NewMongoConnect(ctx context.Context, mongoDB *mongo.Database, kafkaReader *
 		cancel:   cancel,
 		msgChan:  make(chan kafka.Message),
 		tracer:   otel.Tracer("golang-mongo-connect"),
+		handlers: make(map[EventType]mongoMessageHandler),
 	}
 
 	go c.run()
@@ -249,8 +249,21 @@ func (c *MongoConnect) run() {
 	}
 }
 
-// It just prepares.
-// It unmarshals messages to [repo.Message] and groups them by their TopicIds.
+func (c *MongoConnect) getHandler(ev MessageEvent) mongoMessageHandler {
+	handler, ok := c.handlers[ev.EventType()]
+	if ok {
+		return handler
+	}
+
+	switch ev.EventType() {
+	case EvTypeMessageInserted:
+		handler = &mesgInsertedHandler{coll: c.coll}
+	}
+
+	c.handlers[ev.EventType()] = handler
+	return handler
+}
+
 func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []kafka.Message) error {
 	if len(msgList) == 0 {
 		return nil
@@ -262,8 +275,7 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 	ctx, span := c.tracer.Start(ctx, "doTransaction")
 	defer span.End()
 
-	topics := make(map[string][]Event)
-	for i := range msgList { // group messages by their topicID
+	for i := range msgList {
 		kafkaMsg := msgList[i]
 		eventType, err := getEventType(&kafkaMsg)
 		if err != nil {
@@ -282,15 +294,15 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 			return err
 		}
 
-		topicID := event.(MessageEvent).TopicID()
-		topics[topicID] = append(topics[topicID], event)
+		msgEvent := event.(MessageEvent)
+		c.getHandler(msgEvent).EventRecieved(msgEvent)
 
 		// Extract tracing info from message
 		msgCtx := propagator.Extract(context.Background(), otelkafkakonsumer.NewMessageCarrier(&kafkaMsg))
 		trace.SpanFromContext(msgCtx).AddLink(trace.LinkFromContext(ctx))
 	}
 
-	err := c.doTransaction(ctx, topics, msgList[len(msgList)-1])
+	err := c.doTransaction(ctx, msgList[len(msgList)-1])
 
 	if err == nil {
 		span.SetStatus(codes.Ok, "OK")
@@ -300,6 +312,7 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 		span.RecordError(err)
 	}
 
+	clear(c.handlers)
 	return err
 }
 
@@ -327,33 +340,17 @@ func getEventType(m *kafka.Message) (evType EventType, err error) {
 	return evType, nil
 }
 
-func extractMessageFromEvents(events []Event) []repo.Message {
-	res := make([]repo.Message, 0, len(events))
-
-	for i := range events {
-		ev, ok := events[i].(*MessageInserted)
-		if !ok {
-			continue
-		}
-		res = append(res, ev.Msg)
-	}
-
-	return res
-}
-
 // Executes a transaction to process and store messages in a MongoDB collection,
 // and commits a Kafka message upon successful.
 //
 // An error is returned if the transaction or Kafka message commit fails.
 func (c *MongoConnect) doTransaction(
 	ctx context.Context,
-	topicMap map[string][]Event,
 	commitPoint kafka.Message,
 ) error {
 	err := c.mongoCli.UseSession(ctx, func(sc mongo.SessionContext) (err error) {
-		for _, events := range topicMap {
-			messages := extractMessageFromEvents(events)
-			err = c.handleInsertMessage(sc, messages)
+		for _, handler := range c.handlers {
+			err = handler.Handle(sc)
 			if err != nil {
 				break
 			}
@@ -379,55 +376,6 @@ func (c *MongoConnect) doTransaction(
 		}
 	}
 	return err
-}
-
-// find last item, if len was low append appends old messages to input *agrr*
-func (c *MongoConnect) mergeToLastMessage(ctx context.Context, agrr *mongoAggr) (merged bool, err error) {
-	getAgrr := mongoAggr{}
-	err = c.coll.FirstWithCtx(ctx, bson.M{"topicID": agrr.Topic}, &getAgrr, &options.FindOneOptions{Sort: bson.M{"id": 1}})
-	if err != nil {
-		if err != mongo.ErrNoDocuments {
-			return false, err
-		}
-	}
-
-	if getAgrr.Len >= 20 || getAgrr.Len == 0 {
-		return false, nil
-	}
-
-	agrr.Messages = append(getAgrr.Messages, agrr.Messages...)
-	agrr.Len = len(agrr.Messages)
-	agrr.MinId = getAgrr.MinId
-	agrr.ID = getAgrr.ID
-
-	return true, nil
-}
-
-func (c *MongoConnect) handleInsertMessage(sc context.Context, msgList []repo.Message) error {
-	agrr := mongoAggr{
-		Topic:    msgList[0].TopicID,
-		MinId:    msgList[0].ID,
-		MaxId:    msgList[len(msgList)-1].ID,
-		Len:      len(msgList),
-		Messages: msgList,
-	}
-
-	merged, err := c.mergeToLastMessage(sc, &agrr)
-	if err != nil {
-		return err
-	}
-
-	if merged {
-		_, err = c.coll.ReplaceOne(sc, bson.M{"_id": agrr.ID}, agrr)
-	} else {
-		_, err = c.coll.InsertOne(sc, agrr)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (c *MongoConnect) Close() {
