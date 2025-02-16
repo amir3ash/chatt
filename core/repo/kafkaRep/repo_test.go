@@ -6,10 +6,10 @@ import (
 	"chat-system/core/repo"
 	"context"
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/kamva/mgm/v3"
 	"github.com/segmentio/kafka-go"
 )
@@ -141,8 +141,8 @@ func Test_kafkaRepo_marshalEvent(t *testing.T) {
 				t.Errorf("kafkaRepo.marshalEvent() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("kafkaRepo.marshalEvent() = %v, want %v", got, tt.want)
+			if !cmp.Equal(got, tt.want) {
+				t.Errorf("kafkaRepo.marshalEvent() diff=%s", cmp.Diff(got, tt.want))
 			}
 
 			unmarshaledEv, err := UnmarshalEvent(tt.ev.EventType(), got)
@@ -150,8 +150,8 @@ func Test_kafkaRepo_marshalEvent(t *testing.T) {
 				t.Errorf("UnmarshalEvent returns err: %v", err)
 			}
 
-			if !reflect.DeepEqual(unmarshaledEv, tt.ev) {
-				t.Errorf("events must be equal when marshaling and unmashaling, got: %+v, expected: %+v", unmarshaledEv, tt.ev)
+			if !cmp.Equal(unmarshaledEv, tt.ev) {
+				t.Errorf("events must be equal when marshaling and unmashaling, diff: %s", cmp.Diff(unmarshaledEv, tt.ev))
 			}
 		})
 	}
