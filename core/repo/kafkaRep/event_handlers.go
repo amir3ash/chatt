@@ -2,9 +2,11 @@ package kafkarep
 
 import (
 	"chat-system/core/repo"
+	"errors"
 
 	"github.com/kamva/mgm/v3"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -92,6 +94,43 @@ func (m *mesgInsertedHandler) mergeToLastMessage(sc mongo.SessionContext, agrr *
 	return true, nil
 }
 
+type mesgDeletedHandler struct {
+	events []MessageDeleted
+	coll   mgm.Collection
+}
+
+// EventRecieved implements mongoMessageHandler.
+func (m *mesgDeletedHandler) EventRecieved(me MessageEvent) {
+	ev := me.(*MessageDeleted)
+	m.events = append(m.events, *ev)
+}
+
+// Handle implements mongoMessageHandler.
+func (m *mesgDeletedHandler) Handle(sc mongo.SessionContext) error {
+	for i := range m.events {
+		event := m.events[i]
+		id, _ := primitive.ObjectIDFromHex(event.MessageId)
+		res, err := m.coll.UpdateOne(sc, bson.M{
+			"topicID":      event.TopicID(),
+			"minID":        bson.M{"$lte": id},
+			"maxID":        bson.M{"$gte": id},
+			"messages._id": id,
+		}, bson.M{
+			"$set": bson.M{"messages.$.deleted": true},
+			"$inc": bson.M{"messages.$.v": 1},
+		})
+
+		if err != nil {
+			return err
+		}
+
+		if res.ModifiedCount == 0 {
+			return errors.New("message not found")
+		}
+	}
+	return nil
+}
+
 func groupByTopicId[E MessageEvent](events []E) map[string][]E {
 	res := make(map[string][]E, 0)
 	for i := range events {
@@ -103,3 +142,4 @@ func groupByTopicId[E MessageEvent](events []E) map[string][]E {
 }
 
 var _ mongoMessageHandler = &mesgInsertedHandler{}
+var _ mongoMessageHandler = &mesgDeletedHandler{}

@@ -259,6 +259,12 @@ func (c *MongoConnect) getHandler(ev MessageEvent) mongoMessageHandler {
 	switch ev.EventType() {
 	case EvTypeMessageInserted:
 		handler = &mesgInsertedHandler{coll: c.coll}
+
+	case EvTypeMessageDeleted:
+		handler = &mesgDeletedHandler{coll: c.coll}
+	
+	default:
+		slog.Error("handler not found", "eventType", ev.EventType())
 	}
 
 	c.handlers[ev.EventType()] = handler

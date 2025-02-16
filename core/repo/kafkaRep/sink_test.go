@@ -3,11 +3,13 @@ package kafkarep
 import (
 	"chat-system/core/messages"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/protocol"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +31,7 @@ func (m mockKafkaFetch) Close() error {
 
 // CommitMessages implements KafkaReader.
 func (m mockKafkaFetch) CommitMessages(context.Context, ...kafka.Message) error {
-	panic("unimplemented")
+	return nil
 }
 
 // FetchMessage implements KafkaReader.
@@ -157,7 +159,7 @@ func Test(t *testing.T) {
 	ctx := context.Background()
 	kafkaEndpoint := startKakfa(t, ctx)
 	mongoCli := StartMongo(t, ctx)
-	// kafkaEndpoint = "localhost:9092"
+
 	writerConf := &WriterConf{KafkaHost: kafkaEndpoint, MsgTopic: "topic", BatchTimeout: 50 * time.Millisecond}
 	readerConf := &ReaderConf{KafkaHost: kafkaEndpoint, Topic: "topic", MaxBytes: 3000, GroupID: "grp", MaxWait: 300 * time.Millisecond}
 
@@ -170,9 +172,14 @@ func Test(t *testing.T) {
 
 	repo := NewKafkaRepo(kafkaWriter, db)
 
-	_, err := repo.SendMsgToTopic(ctx, messages.Sender{ID: "sender-id"}, "test-topic", "text")
+	sentMsg, err := repo.SendMsgToTopic(ctx, messages.Sender{ID: "sender-id"}, "test-topic", "text")
 	if err != nil {
 		t.Fatalf("can not send mesg: %v", err)
+	}
+
+	_, err = repo.SendMsgToTopic(ctx, messages.Sender{ID: "sender-id"}, "other-topic", "text")
+	if err != nil {
+		t.Fatalf("can not send mesg to other topic: %v", err)
 	}
 
 	time.Sleep(9000 * time.Millisecond)
@@ -186,6 +193,76 @@ func Test(t *testing.T) {
 
 	if len(messsages) != 1 {
 		t.Fatalf("messages' len is %d, expected 1", len(messsages))
+	}
+
+	if !cmp.Equal(messsages[0], sentMsg) {
+		t.Errorf("messages are not equal, %s", cmp.Diff(messsages[0], sentMsg))
+	}
+}
+
+func TestDeletedMessageEvent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip mongodb test container")
+	}
+
+	ctx := context.Background()
+	mongoCli := StartMongo(t, ctx)
+
+	db := mongoCli.Database("chatting2")
+	mConnect := NewMongoConnect(ctx, db, &kafka.Reader{})
+	// pause kafka reader goroutin
+	mConnect.reader = mockKafkaFetch{func(ctx context.Context, m *kafka.Message) error {
+		time.Sleep(time.Hour)
+		return nil
+	}}
+
+	kafkaRepo := NewKafkaRepo(&kafka.Writer{}, db)
+	// send kafkaRepo kafka.Message to MongoConnect
+	kafkaRepo.writer = mockKafkaWriter{func(_ context.Context, m kafka.Message) error {
+		mConnect.msgChan <- m
+		return nil
+	}}
+
+	sentMsg, err := kafkaRepo.SendMsgToTopic(ctx, messages.Sender{ID: "sender-id"}, "test-topic", "text")
+	if err != nil {
+		t.Fatalf("can not send mesg: %v", err)
+	}
+
+	_, err = kafkaRepo.SendMsgToTopic(ctx, messages.Sender{ID: "sender-id"}, "test-topic", "other message")
+	if err != nil {
+		t.Fatalf("can not send 2nd mesg: %v", err)
+	}
+
+	time.Sleep(600 * time.Millisecond)
+	slog.Info("list messages")
+	messsages, err := kafkaRepo.ListMessages(ctx, "test-topic", messages.Pagination{
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("can not list messages: %v", err)
+	}
+
+	if len(messsages) != 2 {
+		t.Fatalf("messages' len is %d, expected 2", len(messsages))
+	}
+
+	// send deleted event
+	mConnect.msgChan <- newDummyKafkaMessage(MessageDeleted{
+		EvType:    EvTypeMessageDeleted,
+		TopicId:   sentMsg.TopicID,
+		MessageId: sentMsg.ID,
+	})
+	time.Sleep(600 * time.Millisecond)
+
+	messsages, err = kafkaRepo.ListMessages(ctx, "test-topic", messages.Pagination{
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("can not list messages: %v", err)
+	}
+
+	if len(messsages) != 1 {
+		t.Errorf("message should be deleted, msgs=%v", messsages)
 	}
 }
 
@@ -223,5 +300,14 @@ func Test_getEventType(t *testing.T) {
 				t.Errorf("getEventType() = %v, want %v", gotEvType, tt.wantEvType)
 			}
 		})
+	}
+}
+
+func newDummyKafkaMessage(event MessageEvent) kafka.Message {
+	data, _ := json.Marshal(event)
+
+	return kafka.Message{
+		Headers: []kafka.Header{{Key: "eventType", Value: []byte(event.EventType())}},
+		Value:   data,
 	}
 }
