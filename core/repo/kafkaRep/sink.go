@@ -262,13 +262,30 @@ func (c *MongoConnect) getHandler(ev MessageEvent) mongoMessageHandler {
 
 	case EvTypeMessageDeleted:
 		handler = &mesgDeletedHandler{coll: c.coll}
-	
+
 	default:
 		slog.Error("handler not found", "eventType", ev.EventType())
 	}
 
 	c.handlers[ev.EventType()] = handler
 	return handler
+}
+
+func (c *MongoConnect) handleMongoTransaction(sc mongo.SessionContext) (err error) {
+	order := [...]EventType{EvTypeMessageInserted, EvTypeMessageDeleted}
+
+	for _, eventType := range order {
+		h, ok := c.handlers[eventType]
+		if !ok {
+			continue
+		}
+
+		err = h.Handle(sc)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []kafka.Message) error {
@@ -323,30 +340,6 @@ func (c *MongoConnect) prepareAndDoTransaction(ctx context.Context, msgList []ka
 	return err
 }
 
-// returns [EventType] from kafka header "eventType".
-// Returns error if header not found or type not found.
-func getEventType(m *kafka.Message) (evType EventType, err error) {
-	if m == nil {
-		return "", errors.New("kafkaMessage is nil")
-	}
-
-	for _, h := range m.Headers {
-		if h.Key == "eventType" {
-			evType, err = ValidateEventType(h.Value)
-			if err != nil {
-				return "", err
-			}
-			break
-		}
-	}
-
-	if evType == "" {
-		return "", ErrEventTypeHeaderNotFound
-	}
-
-	return evType, nil
-}
-
 // Executes a transaction to process and store messages in a MongoDB collection,
 // and commits a Kafka message upon successful.
 //
@@ -356,13 +349,7 @@ func (c *MongoConnect) doTransaction(
 	commitPoint kafka.Message,
 ) error {
 	err := c.mongoCli.UseSession(ctx, func(sc mongo.SessionContext) (err error) {
-		for _, handler := range c.handlers {
-			err = handler.Handle(sc)
-			if err != nil {
-				break
-			}
-		}
-
+		err = c.handleMongoTransaction(sc)
 		if err != nil {
 			slog.Warn("mongo command failed", "err", err)
 			return MongoTransactionErr{fmt.Errorf("mongo command failed: %w", err)}
@@ -387,4 +374,28 @@ func (c *MongoConnect) doTransaction(
 
 func (c *MongoConnect) Close() {
 	c.cancel()
+}
+
+// returns [EventType] from kafka header "eventType".
+// Returns error if header not found or type not found.
+func getEventType(m *kafka.Message) (evType EventType, err error) {
+	if m == nil {
+		return "", errors.New("kafkaMessage is nil")
+	}
+
+	for _, h := range m.Headers {
+		if h.Key == "eventType" {
+			evType, err = ValidateEventType(h.Value)
+			if err != nil {
+				return "", err
+			}
+			break
+		}
+	}
+
+	if evType == "" {
+		return "", ErrEventTypeHeaderNotFound
+	}
+
+	return evType, nil
 }

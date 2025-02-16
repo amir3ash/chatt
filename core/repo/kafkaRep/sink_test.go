@@ -263,6 +263,11 @@ func TestDeletedMessageEvent(t *testing.T) {
 	if len(messsages) != 1 {
 		t.Errorf("message should be deleted, msgs=%v", messsages)
 	}
+
+	err = kafkaRepo.DeleteMessage(ctx, &sentMsg)
+	if err != nil {
+		t.Fatalf("delete message should be idempotent: %v", err)
+	}
 }
 
 func Test_getEventType(t *testing.T) {
