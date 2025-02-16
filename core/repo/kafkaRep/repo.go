@@ -111,7 +111,10 @@ func (k kafkaRepo) ListMessages(ctx context.Context, topicID string, pg messages
 				"newRoot": "$messages",
 			},
 		},
-		bson.M{"$match": bson.M{"_id": bson.M{"$gt": p.AfterId, "$lt": p.BeforeID}}},
+		bson.M{"$match": bson.M{
+			"_id":     bson.M{"$gt": p.AfterId, "$lt": p.BeforeID},
+			"deleted": false,
+		}},
 		sortStage,
 		limitStage,
 	},
