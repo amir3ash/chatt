@@ -9,7 +9,11 @@ import (
 
 type MockRepo struct{}
 
-// ListMessages implements core.Repository.
+// DeleteMessage implements messages.Repository.
+func (m MockRepo) DeleteMessage(ctx context.Context, msg *messages.Message) error {
+	panic("unimplemented")
+}
+
 func (m MockRepo) ListMessages(ctx context.Context, topicID string, p messages.Pagination) ([]messages.Message, error) {
 	res := make([]messages.Message, 0, p.Limit)
 	for i := 0; i < p.Limit; i++ {
@@ -24,7 +28,6 @@ func (m MockRepo) ListMessages(ctx context.Context, topicID string, p messages.P
 	return res, nil
 }
 
-// SendMsgToTopic implements core.Repository.
 func (m MockRepo) SendMsgToTopic(ctx context.Context, sender messages.Sender, topicID string, message string) (messages.Message, error) {
 	return messages.Message{
 		SenderId: sender.ID,

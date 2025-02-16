@@ -13,8 +13,5 @@ type permissionChecker interface {
 type Repository interface {
 	ListMessages(ctx context.Context, topicID string, p Pagination) ([]Message, error)
 	SendMsgToTopic(ctx context.Context, sender Sender, topicID string, message string) (Message, error)
+	DeleteMessage(ctx context.Context, msg *Message) error
 }
-
-
-
-
