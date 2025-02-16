@@ -90,7 +90,7 @@ func NewMPaginatin(c messages.Pagination) (p pagination) {
 
 type Repo struct {
 	msgColl *mgm.Collection
-	db       *mongo.Database
+	db      *mongo.Database
 }
 
 func NewMongoRepo(cli *mongo.Client) (*Repo, error) {
@@ -98,7 +98,7 @@ func NewMongoRepo(cli *mongo.Client) (*Repo, error) {
 	db := cli.Database("chatting")
 	repo := &Repo{
 		msgColl: mgm.NewCollection(db, mgm.CollName(&Message{})),
-		db:       db,
+		db:      db,
 	}
 	err := db.CreateCollection(context.Background(), "hist")
 	if err != nil {
@@ -151,7 +151,49 @@ func (r Repo) SendMsgToTopic(ctx context.Context, sender messages.Sender, topicI
 		TopicID:  topicID,
 		SentAt:   msg.CreatedAt.Truncate(time.Millisecond),
 		Text:     msg.Text,
+		Version:  1,
 	}, err
+}
+
+func (r Repo) DeleteMessage(ctx context.Context, msg *messages.Message) error {
+	id, err := primitive.ObjectIDFromHex(msg.ID)
+	if err != nil {
+		return err
+	}
+
+	res, err := r.msgColl.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+		"$set": bson.M{"deleted": true, "updated_at": time.Now()},
+		"$inc": bson.M{"v": 1},
+	})
+	if err != nil {
+		return err
+	}
+	if res.ModifiedCount == 1 {
+		return nil
+	}
+
+	// not found, retry on hist collection
+	res, err = r.db.Collection("hist").UpdateOne(ctx, bson.M{
+		"topicID": msg.TopicID,
+		"min":     bson.M{"$lte": id},
+		"max":     bson.M{"$gte": id},
+		"msg._id": id,
+	}, bson.M{
+		"$set": bson.M{
+			"msg.$.deleted":    true,
+			"msg.$.updated_at": time.Now(),
+		},
+		"$inc": bson.M{"msg.$.v": 1},
+	})
+
+	if err != nil {
+		return err
+	}
+	if res.ModifiedCount != 1 {
+		return messages.ErrNotFound{Type: "message", ID: msg.ID}
+	}
+
+	return nil
 }
 
 func (r Repo) createTopic(ctx context.Context, topicID string) error {
@@ -314,6 +356,7 @@ func (r Repo) readFromBucket(ctx context.Context, topicID string, pg messages.Pa
 						"$match": bson.M{
 							"topicID": topicID,
 							"_id":     bson.M{"$gt": p.AfterId, "$lt": p.BeforeID},
+							"deleted": false,
 						},
 					},
 					sortStage,

@@ -136,3 +136,103 @@ func TestRepo_SendMsgToTopic_afterAggr(t *testing.T) {
 		t.Errorf("messages not equal: %s", cmp.Diff(msgsSent, messages))
 	}
 }
+
+func TestRepo_DeleteMessage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("mongo test container skipped")
+	}
+
+	ctx := context.Background()
+	mongoCli := startMongo(t, ctx)
+
+	repo, err := NewMongoRepo(mongoCli)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sentMsg, err := repo.SendMsgToTopic(ctx, messages.Sender{ID: "test-user"}, "test-topic", "test-text")
+	if err != nil {
+		t.Errorf("can not send message: %v", err)
+	}
+
+	_, err = repo.SendMsgToTopic(ctx, messages.Sender{ID: "test-user"}, "test-topic", "other-text")
+	if err != nil {
+		t.Errorf("can not send message: %v", err)
+	}
+
+	messageList, err := repo.ListMessages(ctx, "test-topic", messages.Pagination{
+		Limit: 10,
+	})
+	if err != nil {
+		t.Errorf("can not list messages %v", err)
+	}
+
+	if len(messageList) != 2 {
+		t.Fatalf("messages len is %d, expected 2", len(messageList))
+	}
+
+	err = repo.DeleteMessage(ctx, &sentMsg)
+	if err != nil {
+		t.Errorf("can not delete message: %v", err)
+	}
+
+	messageList, err = repo.ListMessages(ctx, "test-topic", messages.Pagination{
+		Limit: 10,
+	})
+	if len(messageList) != 1 {
+		t.Errorf("message not deleted, len=%d", len(messageList))
+	}
+}
+
+func TestRepo_DeleteMessage_afterAggr(t *testing.T) {
+	if testing.Short() {
+		t.Skip("mongo test container skipped")
+	}
+
+	ctx := context.Background()
+	mongoCli := startMongo(t, ctx)
+
+	repo, err := NewMongoRepo(mongoCli)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sentMsg, err := repo.SendMsgToTopic(ctx, messages.Sender{ID: "test-user"}, "test-topic", "test-text")
+	if err != nil {
+		t.Errorf("can not send message: %v", err)
+	}
+
+	_, err = repo.SendMsgToTopic(ctx, messages.Sender{ID: "test-user"}, "test-topic", "other-text")
+	if err != nil {
+		t.Errorf("can not send message: %v", err)
+	}
+
+	_, err = repo.writeToBucket(ctx)
+	if err != nil {
+		t.Errorf("can not aggregate: %v", err)
+	}
+
+	messageList, err := repo.ListMessages(ctx, "test-topic", messages.Pagination{
+		Limit: 10,
+	})
+	if err != nil {
+		t.Errorf("can not list messages %v", err)
+	}
+
+	if len(messageList) != 2 {
+		t.Fatalf("messages len is %d, expected 2", len(messageList))
+	}
+
+	// delete aggregated message
+	err = repo.DeleteMessage(ctx, &sentMsg)
+	if err != nil {
+		t.Errorf("can not delete aggregated message: %v", err)
+	}
+
+	messageList, err = repo.ListMessages(ctx, "test-topic", messages.Pagination{
+		Limit: 10,
+	})
+	if len(messageList) != 1 {
+		t.Errorf("message not deleted, len=%d", len(messageList))
+	}
+}
