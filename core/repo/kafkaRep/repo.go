@@ -137,6 +137,7 @@ func (k kafkaRepo) ListMessages(ctx context.Context, topicID string, pg messages
 			TopicID:  m.TopicID,
 			SentAt:   m.CreatedAt,
 			Text:     m.Text,
+			Version:  m.Version,
 		})
 	}
 
