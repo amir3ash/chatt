@@ -4,6 +4,7 @@ import (
 	"chat-system/core/repo"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -62,6 +63,7 @@ type MessageDeleted struct {
 	TopicId        string    `json:"topic_id"`
 	MessageId      string    `json:"message_id"`
 	MessageVersion uint      `json:"message_version,omitempty"`
+	DeletedAt      time.Time `json:"deleted_at"`
 }
 
 // TopicID implements MessageEvent.

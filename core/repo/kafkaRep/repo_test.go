@@ -118,6 +118,7 @@ func Test_kafkaRepo_marshalEvent(t *testing.T) {
 		"topic",
 		"message-Id",
 		5,
+		time.Now(),
 	}
 
 	insertedBytes, _ := json.Marshal(inserted)

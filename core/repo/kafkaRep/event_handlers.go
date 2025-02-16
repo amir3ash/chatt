@@ -116,7 +116,10 @@ func (m *mesgDeletedHandler) Handle(sc mongo.SessionContext) error {
 			"maxID":        bson.M{"$gte": id},
 			"messages._id": id,
 		}, bson.M{
-			"$set": bson.M{"messages.$.deleted": true},
+			"$set": bson.M{
+				"messages.$.deleted":    true,
+				"messages.$.updated_at": event.DeletedAt,
+			},
 			"$inc": bson.M{"messages.$.v": 1},
 		})
 

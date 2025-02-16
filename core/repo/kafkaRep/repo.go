@@ -217,6 +217,7 @@ func (k kafkaRepo) DeleteMessage(ctx context.Context, msg *messages.Message) err
 		TopicId:        msg.TopicID,
 		MessageId:      msg.ID,
 		MessageVersion: msg.Version,
+		DeletedAt:      time.Now(),
 	}
 
 	body, err := k.marshalEvent(&event)
