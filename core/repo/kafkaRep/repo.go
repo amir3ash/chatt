@@ -201,6 +201,48 @@ func (k kafkaRepo) SendMsgToTopic(ctx context.Context, sender messages.Sender, t
 	return *mongoMesg.ToApiMessage(), err
 }
 
+// DeleteMessage implements messages.Repository.
+func (k kafkaRepo) DeleteMessage(ctx context.Context, msg *messages.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if msg == nil {
+		return errors.New("message is nil")
+	}
+
+	event := MessageDeleted{
+		EventId:        NewEventID(),
+		EvType:         EvTypeMessageDeleted,
+		TopicId:        msg.TopicID,
+		MessageId:      msg.ID,
+		MessageVersion: msg.Version,
+	}
+
+	body, err := k.marshalEvent(&event)
+	if err != nil {
+		return err
+	}
+
+	kafkaMesg := kafka.Message{
+		Key:   []byte(msg.TopicID),
+		Value: body,
+		Headers: []kafka.Header{
+			protocol.Header{
+				Key:   "eventType",
+				Value: []byte(event.EvType),
+			},
+		},
+	}
+
+	err = k.writer.WriteMessage(ctx, kafkaMesg)
+	if err != nil {
+		slog.ErrorContext(ctx, "can not write the message to kafka", "kafkaTopic", k.messagesTopic, "err", err)
+	}
+
+	return err
+}
+
 func (kafkaRepo) marshalEvent(m Event) ([]byte, error) {
 	bytes, err := json.Marshal(m)
 	if err != nil {

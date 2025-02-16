@@ -246,12 +246,11 @@ func TestDeletedMessageEvent(t *testing.T) {
 		t.Fatalf("messages' len is %d, expected 2", len(messsages))
 	}
 
-	// send deleted event
-	mConnect.msgChan <- newDummyKafkaMessage(MessageDeleted{
-		EvType:    EvTypeMessageDeleted,
-		TopicId:   sentMsg.TopicID,
-		MessageId: sentMsg.ID,
-	})
+	err = kafkaRepo.DeleteMessage(ctx, &sentMsg)
+	if err != nil {
+		t.Fatalf("can not delete message: %v", err)
+	}
+
 	time.Sleep(600 * time.Millisecond)
 
 	messsages, err = kafkaRepo.ListMessages(ctx, "test-topic", messages.Pagination{
