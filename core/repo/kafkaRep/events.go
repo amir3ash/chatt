@@ -4,6 +4,7 @@ import (
 	"chat-system/core/repo"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -57,10 +58,17 @@ func (e MessageInserted) TopicID() string {
 }
 
 type MessageDeleted struct {
-	EventId        EventID   `json:"event_id,omitempty"`
-	EvType         EventType `json:"event_type,omitempty"`
-	MessageId      string    `json:"message_id,omitempty"`
+	EventId        EventID   `json:"event_id"`
+	EvType         EventType `json:"event_type"`
+	TopicId        string    `json:"topic_id"`
+	MessageId      string    `json:"message_id"`
 	MessageVersion uint      `json:"message_version,omitempty"`
+	DeletedAt      time.Time `json:"deleted_at"`
+}
+
+// TopicID implements MessageEvent.
+func (e MessageDeleted) TopicID() string {
+	return e.TopicId
 }
 
 type TextEdited struct {
@@ -112,3 +120,4 @@ var _ Event = MessageInserted{}
 var _ Event = MessageDeleted{}
 
 var _ MessageEvent = MessageInserted{}
+var _ MessageEvent = MessageDeleted{}

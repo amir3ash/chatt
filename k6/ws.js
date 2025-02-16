@@ -1,49 +1,44 @@
 import ws from 'k6/ws';
 import { check, sleep } from 'k6';
-import { Trend, Rate } from 'k6/metrics';
+import compair from 'k6/x/async-timer'
 import { randomIntBetween, randomArrayItem, getUserTopics, randomUser, requireEnv} from './util.js'
 import { createNewMessage } from './api-util.js'
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.4/index.js';
 
-const wsMsgRecieved = new Trend('ws_waiting_time', true);
-const wsErrors = new Rate('ws_errors');
-
-const sessionDuration = randomIntBetween(50000, 55000); // user session between 50s and 55s
+const sessionDuration = randomIntBetween(20000, 20001); // user session between 50s and 55s
 
 const wsUrl = `ws://${requireEnv('WS_HOST')}/ws`;
 const { userId, clientId, cookies } = randomUser()
 const authorizedTopics = getUserTopics(userId)
 
 export const options = {
-  vus: 1000, 
-  iterations: 1000
+  vus: 2000, 
+  iterations: 2000
 };
 
-export function setup(){
-}
-
+export function setup(){}
 
 export default function () {
-
-  let seqId = 0
-  const wsTimer = new WSTimer()
-
+	let sendMode = true
   const res = ws.connect(wsUrl, { headers: { cookie: cookies.toString() } }, function (socket) {
 
     socket.on('open', function open() {
 
-      console.log(`VU ${__VU}: connected`);
+      console.debug(`VU ${__VU}: connected`);
       sleep(Math.random())
 
-      if (Math.random() < 0.1)
+      if (Math.random() < 0.2)
         socket.setInterval(function timeout() {
-          const topic = randomArrayItem(authorizedTopics)
-          const newMsg = `${userId}-${clientId}-${seqId++}`
+		      if (!sendMode) return
 
+          const topic = randomArrayItem(authorizedTopics)
+          const newMsg = compair.start() // creates new unique str
           const hResp = createNewMessage(topic, newMsg, cookies.toString())
           
           if (hResp.status === 201) {
-            wsTimer.AddedMessage(newMsg)
-          }
+            compair.sent(newMsg)
+          } else 
+            console.error(hResp)
 
           check(hResp, { 'Sending New Message': (r) => r && r.status === 201 });
 
@@ -51,84 +46,45 @@ export default function () {
 
     });
 
-
     socket.on('ping', function () {
-
       console.log('PING!');
-
     });
 
-
     socket.on('pong', function () {
-
       console.log('PONG!');
-
     });
 
     socket.on("message", function (e) {
       const obj = JSON.parse(e)
-
-      const sender = obj.senderId
-      if (sender !== userId)
-        return
-
-      const msg = obj.text
-      wsTimer.RecivedMessage(msg)
+      compair.end(obj.text)
     })
 
+    socket.on('close', function (code) {
+      check(code, {'wsCloseCode': c => c === 1000 || c === 1001})
 
-    socket.on('close', function () {
-
-      console.log(`VU ${__VU}: disconnected`);
-
+      console.debug(`VU ${__VU}: disconnected`);
     });
 
-    //socket.setTimeout(function () {
-
-    // console.log(`VU ${__VU}: ${sessionDuration}ms passed, leaving the chat`);
-
-    //socket.send(JSON.stringify({ event: 'LEAVE' }));
-
-    //}, sessionDuration);
-
+    socket.setTimeout(function (){
+      sendMode = false;
+    }, sessionDuration)
 
     socket.setTimeout(function () {
-
-      console.log(`Closing the socket forcefully 3s after graceful LEAVE`);
-
       socket.close(1001); // going away
-
-    }, sessionDuration + 3000);
-
+    }, sessionDuration + 19000);
   });
-
 
   check(res, { 'Connected successfully': (r) => r && r.status === 101 });
 	if (res.status !== 101){
-		console.error('websocket not connected', {status: res.status, body: res.body})
+		console.error('websocket not connected', {status: res.status, body: res.body, res: res})
 	}
-
 }
 
-
-class WSTimer {
-  constructor() {
-    this.map = new Map()
-  }
-
-  AddedMessage(msg_id) {
-    this.map.set(msg_id, (new Date()).getTime())
-  }
-
-  RecivedMessage(msg_id) {
-    const hasMsg = this.map.has(msg_id)
-    wsErrors.add(!hasMsg)
-
-    if (hasMsg) {
-      const dur = (new Date()).getTime() - this.map.get(msg_id)
-      wsMsgRecieved.add(dur)
-      this.map.delete(msg_id)
-    }
-  }
-
+export function handleSummary(data) {
+  const outputFile = `summary/ws_${(new Date()).toISOString()}.json`
+  console.log('this test exported to file ', outputFile)
+  return {
+    stdout: textSummary(data),
+    [outputFile]: JSON.stringify(data),
+  };
 }

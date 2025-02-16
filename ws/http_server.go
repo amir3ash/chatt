@@ -19,8 +19,11 @@ type errorHandledConn struct {
 // calls the function onErr in a new goroutine in case of none nil error.
 func (c errorHandledConn) Write(b []byte) error {
 	err := c.conn.Write(b)
+
 	if err != nil {
-		slog.Warn("cant write to websocket", "err", err)
+		if !errors.Is(err, nettyws.ClosedError{}) {
+			slog.Error("cant write to websocket", "err", err)
+		}
 		go c.onErr(err)
 	}
 	return nil
@@ -39,7 +42,7 @@ type wsHandler struct {
 
 func newWsHandler(presence *presence.MemService[Client], dispatcher *roomDispatcher) wsHandler {
 	wsh := nettyws.NewWebsocket(
-		nettyws.WithAsyncWrite(512, false),
+		// nettyws.WithAsyncWrite(10, true),
 		// nettyws.WithBufferSize(2048, 2048),
 		nettyws.WithNoDelay(true),
 	)
@@ -111,7 +114,10 @@ func (s *wsHandler) onClose(conn nettyws.Conn, err error) {
 	s.onlineClients.Disconnected(context.TODO(), client)
 	s.dispatcher.dispatch(clientEvent{clientDisconnected, client})
 
-	slog.Debug("client closed the connection", "remoteAddr", conn.RemoteAddr(), "userId", client.UserId(), "err", err)
+	slog.Debug("client closed the connection",
+		slog.String("remoteAddr", conn.RemoteAddr()),
+		slog.String("userId", client.UserId()),
+		"err", err)
 }
 
 // closeClient disconnect the client from server

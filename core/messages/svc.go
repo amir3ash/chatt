@@ -1,8 +1,10 @@
 package messages
 
 import (
+	"bytes"
 	"chat-system/authz"
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -19,9 +21,41 @@ type Message struct {
 	SenderId string    `json:"senderId"`
 	ID       string    `json:"id"`
 	Version  uint      `json:"v"`
-	TopicID  string    `josn:"topicId"`
+	TopicID  string    `json:"topicId"`
 	SentAt   time.Time `json:"sentAt"`
 	Text     string    `json:"text"`
+}
+
+func (m *Message) MarshalJSON() ([]byte, error) {
+	sb := bytes.Buffer{}
+	sb.Grow(128)
+
+	sb.WriteString(`{"senderId":`)
+	s, _ := json.Marshal(m.SenderId)
+	sb.Write(s)
+
+	sb.WriteString(`,"id":`)
+	s, _ = json.Marshal(m.ID)
+	sb.Write(s)
+
+	sb.WriteString(`,"v":`)
+	s, _ = json.Marshal(m.Version)
+	sb.Write(s)
+
+	sb.WriteString(`,"topicId":`)
+	s, _ = json.Marshal(m.TopicID)
+	sb.Write(s)
+
+	sb.WriteString(`,"sentAt":`)
+	s, _ = m.SentAt.MarshalJSON()
+	sb.Write(s)
+
+	sb.WriteString(`,"text":`)
+	s, _ = json.Marshal(m.Text)
+	sb.Write(s)
+	sb.WriteRune('}')
+
+	return sb.Bytes(), nil
 }
 
 type Pagination struct {
