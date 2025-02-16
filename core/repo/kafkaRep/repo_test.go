@@ -115,6 +115,7 @@ func Test_kafkaRepo_marshalEvent(t *testing.T) {
 	deleted := MessageDeleted{
 		"event-id",
 		EvTypeMessageDeleted,
+		"topic",
 		"message-Id",
 		5,
 	}
