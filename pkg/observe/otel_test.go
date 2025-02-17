@@ -24,15 +24,18 @@ func Test(t *testing.T) {
 
 	mock.On("handler", "/v1/traces").Once()
 	mock.On("handler", "/v1/logs").Once()
+	mock.On("handler", "/v1/metrics").Once()
 
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
-	t.Setenv("OTEL_BLRP_SCHEDULE_DELAY", "10") // 10ms for batch log processor
-	t.Setenv("OTEL_BSP_SCHEDULE_DELAY", "10")  // 20ms for batch span processor
+	t.Setenv("OTEL_BLRP_SCHEDULE_DELAY", "30")    // 30ms for batch log processor
+	t.Setenv("OTEL_BSP_SCHEDULE_DELAY", "20")     // 20ms for batch span processor
+	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "40") // 40ms for metric processor
 
 	observeOpts := observe.Options().
 		WithService("service-name", "namespace-test").
 		EnableTraceProvider().
-		EnableLoggerProvider()
+		EnableLoggerProvider().
+		EnableMeterProvider()
 
 	otelShutdown, err := observe.SetupOTelSDK(context.TODO(), observeOpts)
 	if err != nil {
@@ -45,7 +48,10 @@ func Test(t *testing.T) {
 
 	slog.Error("mock custom log")
 
-	time.Sleep(200 * time.Millisecond)
+	counter, _ := otel.Meter("t-meter").Int64Counter("counter")
+	counter.Add(context.Background(), 1)
+
+	time.Sleep(100 * time.Millisecond)
 
 	if !mock.AssertExpectations(t) {
 		t.Error("it should send data to http endpoint")

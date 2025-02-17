@@ -6,14 +6,13 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/log"
@@ -137,16 +136,16 @@ func (opts *options) EnableTraceProvider() *options {
 }
 
 func (opts *options) EnableMeterProvider() *options {
-	metricExporter, err := stdoutmetric.New()
+	setDefaultEnv("OTEL_METRIC_EXPORT_INTERVAL", "3000") // ms
+
+	metricExporter, err := otlpmetrichttp.New(context.Background())
 	if err != nil {
 		opts.handleErr(err)
 		return opts
 	}
 
 	meterProvider := metric.NewMeterProvider(
-		metric.WithReader(metric.NewPeriodicReader(metricExporter,
-			// Default is 1m. Set to 3s for demonstrative purposes.
-			metric.WithInterval(3*time.Second))),
+		metric.WithReader(metric.NewPeriodicReader(metricExporter)),
 		metric.WithResource(opts.resource),
 	)
 
