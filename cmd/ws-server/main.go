@@ -11,6 +11,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -51,20 +54,19 @@ func getMessageWatcher(conf *Config) (ws.MessageWatcher, error) {
 	return nil, fmt.Errorf("watcher type %s not found", wType)
 }
 
-func prepare(conf *Config) error {
+func prepare(conf *Config) (*ws.Server, error) {
 	authzed, err := authz.NewInsecureAuthZedCli(authz.Conf{BearerToken: conf.SpiceDBToken, ApiUrl: conf.SpiceDbUrl})
 	if err != nil {
-		return fmt.Errorf("can't create authzed client: %w", err)
+		return nil, fmt.Errorf("can't create authzed client: %w", err)
 	}
 
 	authoriz := authz.NewAuthoriz(authzed)
 	msgWatcher, err := getMessageWatcher(conf)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	ws.Run(msgWatcher, authoriz)
-	return nil
+	return ws.NewServer(msgWatcher, ws.NewWSAuthorizer(authoriz)), nil
 }
 
 func main() {
@@ -86,8 +88,14 @@ func main() {
 		panic(err)
 	}
 
-	err = prepare(conf)
+	wsServer, err := prepare(conf)
 	if err != nil {
 		panic(err)
+	}
+
+
+	if err := wsServer.ListenAndServe(":7100"); err != nil {
+		slog.Error("Listen failed", "err", err)
+		panic("listen failed: " + err.Error())
 	}
 }
