@@ -151,7 +151,7 @@ func TestHttpServer_OnClose(t *testing.T) {
 	wsHandler := newWsHandler(presence, dispatcher)
 
 	cli := Client{"cId", "uId", &errorHandledConn{}}
-	conn := mockNettyConn{userData: cli}
+	conn := &mockNettyConn{userData: cli}
 	wsHandler.onConnect(conn)
 
 	devices := presence.GetDevicesForUsers(cli.UserId())
