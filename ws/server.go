@@ -11,18 +11,19 @@ import (
 func NewServer(watcher MessageWatcher, authz whoCanReadTopic) *Server {
 	onlineUsersPresence := presence.NewMemService[Client]()
 
-	r := &Server{
+	s := &Server{
 		Watcher:             watcher,
 		Authz:               authz,
 		onlineUsersPresence: onlineUsersPresence,
 		roomServer:          NewRoomServer(onlineUsersPresence, authz),
 		roomDispatcher:      NewRoomDispatcher(),
+		httpHandler:         http.NewServeMux(),
 	}
 
-	r.registerEventHandlers()
-	r.setupWsHandler()
+	s.registerEventHandlers()
+	s.setupWsHandler()
 
-	return r
+	return s
 }
 
 type Server struct {
@@ -34,16 +35,18 @@ type Server struct {
 	roomServer          *roomServer
 	roomDispatcher      *roomDispatcher
 	wsHandler           wsHandler
+	httpHandler         *http.ServeMux
 	httpServer          *http.Server
 	wsURL               string
 }
 
-func (m *Server) ListenAndServe(addr string) error {
-	go ReadChangeStream(m.Watcher, m.roomServer)
+// ListenAndServe listens and serves websocket handshakes on path "/ws".
+func (s *Server) ListenAndServe(addr string) error {
+	go ReadChangeStream(s.Watcher, s.roomServer)
 
-	m.httpServer = &http.Server{Addr: addr}
-	m.httpServer.RegisterOnShutdown(func() {
-		err := m.wsHandler.shutdown()
+	s.httpServer = &http.Server{Addr: addr, Handler: s.httpHandler}
+	s.httpServer.RegisterOnShutdown(func() {
+		err := s.wsHandler.shutdown()
 		if err != nil {
 			slog.Error("can not shutdown websocket", "err", err)
 		}
@@ -54,9 +57,9 @@ func (m *Server) ListenAndServe(addr string) error {
 		return err
 	}
 
-	m.wsURL = "ws://" + ln.Addr().String()
+	s.wsURL = "ws://" + ln.Addr().String()
 
-	return m.httpServer.Serve(ln)
+	return s.httpServer.Serve(ln)
 }
 
 func (s *Server) setupWsHandler() {
@@ -64,7 +67,7 @@ func (s *Server) setupWsHandler() {
 	s.wsHandler = newWsHandler(s.onlineUsersPresence, s.roomDispatcher)
 	handler := wsHandler.setupHttpMiddlewares(s.wsHandler)
 
-	http.Handle("/ws", handler)
+	s.httpHandler.Handle("/ws", handler)
 }
 
 func (s *Server) registerEventHandlers() {
