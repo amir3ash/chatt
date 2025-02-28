@@ -18,6 +18,7 @@ func NewServer(watcher MessageWatcher, authz whoCanReadTopic) *Server {
 		roomServer:          NewRoomServer(onlineUsersPresence, authz),
 		roomDispatcher:      NewRoomDispatcher(),
 		httpHandler:         http.NewServeMux(),
+		listenDone:          make(chan struct{}),
 	}
 
 	s.registerEventHandlers()
@@ -37,7 +38,9 @@ type Server struct {
 	wsHandler           wsHandler
 	httpHandler         *http.ServeMux
 	httpServer          *http.Server
-	wsURL               string
+
+	listenDone chan struct{} // used for synchronization of readig wsURL.
+	wsURL      string
 }
 
 // ListenAndServe listens and serves websocket handshakes on path "/ws".
@@ -54,10 +57,12 @@ func (s *Server) ListenAndServe(addr string) error {
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		close(s.listenDone)
 		return err
 	}
 
 	s.wsURL = "ws://" + ln.Addr().String()
+	close(s.listenDone)
 
 	return s.httpServer.Serve(ln)
 }
@@ -92,11 +97,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // return websocket endpoint (like ws://127.0.0.1:7100/ws).
-//
-// Note: it must be called after calling listen.
 func (s *Server) WsEndpoint() string {
-	if s.wsURL == "" {
-		panic("Manager: WsEndpoint(): unkown addr")
-	}
+	<-s.listenDone
 	return s.wsURL + "/ws"
 }
