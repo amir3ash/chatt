@@ -70,7 +70,10 @@ func prepare(conf *Config) (*ws.Server, error) {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level:     slog.LevelInfo,
+		AddSource: true,
+	})))
 
 	observeOpts := observe.Options().
 		WithService("ws-server", "chatting").
@@ -93,6 +96,16 @@ func main() {
 		panic(err)
 	}
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
+		err := wsServer.Shutdown(ctx)
+		slog.Error("shutdown websocket failed", "err", err)
+		panic("shutdown failed: " + err.Error())
+	}()
 
 	if err := wsServer.ListenAndServe(":7100"); err != nil {
 		slog.Error("Listen failed", "err", err)
