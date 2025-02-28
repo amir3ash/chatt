@@ -49,15 +49,14 @@ func (l *deviceList[T]) getUserDevices() (res []T) {
 	return
 }
 
-
 // A util func for testing existance of device.
 func (l *deviceList[T]) deviceExists(dev T) bool {
 	cId := dev.ClientId()
 
 	for _, c := range l.list {
-		if c.ClientId() == cId{
+		if c.ClientId() == cId {
 			return c.UserId() == dev.UserId()
-		}	
+		}
 	}
 
 	return false
@@ -138,7 +137,7 @@ func (s *MemService[T]) deviceExists(dev T) bool {
 	if !ok {
 		return false
 	}
-	
+
 	return val.(*deviceList[T]).deviceExists(dev)
 }
 
@@ -161,4 +160,8 @@ func (s *MemService[T]) GetDevicesForUsers(userIds ...string) (res []T) {
 		res = append(res, clients...)
 	}
 	return
+}
+
+func (s *MemService[T]) Len() int {
+	return int(s.len.Load())
 }
