@@ -6,9 +6,24 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
+	"strings"
 )
 
-func NewServer(watcher MessageWatcher, authz whoCanReadTopic) *Server {
+type ServerOpt func(s *Server)
+
+func WithAllowedOrigin(origins ...string) ServerOpt {
+	return func(s *Server) {
+		for _, orig := range origins {
+			if strings.HasSuffix(orig, "*") {
+				panic("ws.Server: wildcard origin not supported yet")
+			}
+		}
+		s.AllowedOrigins = append(s.AllowedOrigins, origins...)
+	}
+}
+
+func NewServer(watcher MessageWatcher, authz whoCanReadTopic, opts ...ServerOpt) *Server {
 	onlineUsersPresence := presence.NewMemService[Client]()
 
 	s := &Server{
@@ -19,6 +34,10 @@ func NewServer(watcher MessageWatcher, authz whoCanReadTopic) *Server {
 		roomDispatcher:      NewRoomDispatcher(),
 		httpHandler:         http.NewServeMux(),
 		listenDone:          make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	s.registerEventHandlers()
@@ -68,9 +87,10 @@ func (s *Server) ListenAndServe(addr string) error {
 }
 
 func (s *Server) setupWsHandler() {
-	// TODO add allowed origins to prevent CSRF
 	s.wsHandler = newWsHandler(s.onlineUsersPresence, s.roomDispatcher)
 	handler := wsHandler.setupHttpMiddlewares(s.wsHandler)
+
+	handler = AllowedOriginsMiddleware(handler, s.AllowedOrigins)
 
 	s.httpHandler.Handle("/ws", handler)
 }
@@ -100,4 +120,28 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) WsEndpoint() string {
 	<-s.listenDone
 	return s.wsURL + "/ws"
+}
+
+// A middleware to check Origin http header to prevent CSRF attack in websocket handshakes in browsers.
+//
+// If Origin header is empty or is allowed, it will pass.
+// Buf if origin is not allowed returns 403 response.
+func AllowedOriginsMiddleware(h http.Handler, allowedOrigins []string) http.Handler {
+	if len(allowedOrigins) == 0 {
+		return h
+	}
+
+	errBody := []byte("Origin is not allowed.")
+	slices.Sort(allowedOrigins)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		_, found := slices.BinarySearch(allowedOrigins, origin)
+		if found || origin == "" {
+			h.ServeHTTP(w, r)
+		} else {
+			w.WriteHeader(403)
+			w.Write(errBody)
+		}
+	})
 }
